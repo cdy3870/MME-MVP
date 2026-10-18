@@ -1,0 +1,304 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:migration-eval:schema:record:v0",
+  "title": "CallRecord",
+  "description": "One recorded model call, normalized across providers (schema v0). Stored one per line in JSONL. Only identity, routing and timing fields are required so that incomplete logs can still be represented; whether a record is replay-grade, speed-and-cost only, or insufficient is decided by the grader (REC-4), not by this schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "id", "component", "provider", "model", "started_at"],
+  "properties": {
+    "schema_version": {
+      "const": "v0",
+      "description": "Present on every record. Files mixing versions are rejected (REC-5)."
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique id of this record within an export."
+    },
+    "component": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Name of the application component that made the call, set by the recorder's component(name) context or at import."
+    },
+    "provider": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]*$",
+      "description": "Lowercase provider key, e.g. openai, anthropic, gemini. Matches the catalog and the partner's provider allow-list."
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Model id as requested by the caller."
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the request was sent. Replay paces requests from these timestamps (EVL-3)."
+    },
+    "completed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the response finished (end of stream for streamed calls)."
+    },
+    "latency": { "$ref": "#/$defs/Latency" },
+    "usage": { "$ref": "#/$defs/Usage" },
+    "request": { "$ref": "#/$defs/ModelRequest" },
+    "response": { "$ref": "#/$defs/ModelResponse" },
+    "metadata": {
+      "type": "object",
+      "description": "Caller-supplied tags, e.g. a request category. Subject to export redaction.",
+      "additionalProperties": {
+        "type": ["string", "number", "boolean", "null"]
+      }
+    },
+    "source": { "$ref": "#/$defs/RecordSource" }
+  },
+  "$defs": {
+    "RecordSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "description": "How this record was produced.",
+      "properties": {
+        "type": { "enum": ["recorder", "import_jsonl"] },
+        "tool_version": { "type": "string", "minLength": 1 }
+      }
+    },
+    "Latency": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "total_ms": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Request sent to response complete."
+        },
+        "time_to_first_token_ms": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Streamed calls only."
+        }
+      }
+    },
+    "Usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Token counts as reported by the provider.",
+      "properties": {
+        "input_tokens": { "type": "integer", "minimum": 0 },
+        "output_tokens": { "type": "integer", "minimum": 0 },
+        "cached_input_tokens": { "type": "integer", "minimum": 0 },
+        "reasoning_tokens": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "ModelRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The call as sent, normalized. A system prompt is a message with role system.",
+      "properties": {
+        "messages": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Message" }
+        },
+        "parameters": { "$ref": "#/$defs/RequestParameters" },
+        "tools": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ToolDefinition" }
+        },
+        "tool_choice": {
+          "oneOf": [
+            { "enum": ["auto", "none", "required"] },
+            { "$ref": "#/$defs/NamedToolChoice" }
+          ]
+        },
+        "stream": {
+          "type": "boolean",
+          "description": "Whether the original call was streamed."
+        }
+      }
+    },
+    "NamedToolChoice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "name"],
+      "description": "Force the model to call a specific tool.",
+      "properties": {
+        "type": { "const": "tool" },
+        "name": { "type": "string", "minLength": 1 }
+      }
+    },
+    "RequestParameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "temperature": { "type": "number", "minimum": 0 },
+        "top_p": { "type": "number", "minimum": 0, "maximum": 1 },
+        "top_k": { "type": "integer", "minimum": 1 },
+        "max_output_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Needed to compute worst-case cost per call (NFR-7)."
+        },
+        "stop": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "seed": { "type": "integer" },
+        "response_format": { "$ref": "#/$defs/ResponseFormat" },
+        "extra": {
+          "type": "object",
+          "description": "Provider-specific parameters with no normalized equivalent."
+        }
+      }
+    },
+    "ResponseFormat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "description": "Structured-output request; used by the output-schema check (EVL-4).",
+      "properties": {
+        "type": { "enum": ["text", "json_object", "json_schema"] },
+        "schema": { "type": "object" }
+      }
+    },
+    "Message": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "content"],
+      "properties": {
+        "role": { "enum": ["system", "user", "assistant", "tool"] },
+        "content": {
+          "oneOf": [
+            { "type": "string" },
+            {
+              "type": "array",
+              "items": { "$ref": "#/$defs/ContentPart" }
+            }
+          ]
+        }
+      }
+    },
+    "ContentPart": {
+      "oneOf": [
+        { "$ref": "#/$defs/TextPart" },
+        { "$ref": "#/$defs/ImagePart" },
+        { "$ref": "#/$defs/ToolCallPart" },
+        { "$ref": "#/$defs/ToolResultPart" }
+      ]
+    },
+    "TextPart": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "text"],
+      "properties": {
+        "type": { "const": "text" },
+        "text": { "type": "string" }
+      }
+    },
+    "ImagePart": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "image" },
+        "media_type": { "type": "string" },
+        "url": { "type": "string" },
+        "data": {
+          "type": "string",
+          "description": "Base64-encoded image bytes."
+        }
+      }
+    },
+    "ToolCallPart": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "name"],
+      "description": "A tool call made earlier in the conversation (assistant role). Same fields as ToolCall.",
+      "properties": {
+        "type": { "const": "tool_call" },
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "arguments": { "type": "object" },
+        "arguments_raw": { "type": "string" }
+      }
+    },
+    "ToolResultPart": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "tool_call_id", "content"],
+      "properties": {
+        "type": { "const": "tool_result" },
+        "tool_call_id": { "type": "string", "minLength": 1 },
+        "content": { "type": "string" },
+        "is_error": { "type": "boolean" }
+      }
+    },
+    "ToolDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "input_schema": {
+          "type": "object",
+          "description": "JSON Schema for the tool's arguments."
+        }
+      }
+    },
+    "ToolCall": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "description": "A tool call made by the model in this response.",
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "arguments": {
+          "type": "object",
+          "description": "Parsed arguments."
+        },
+        "arguments_raw": {
+          "type": "string",
+          "description": "Original argument string when the model emitted JSON that does not parse."
+        }
+      }
+    },
+    "ModelResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["success", "error"] },
+        "id": {
+          "type": "string",
+          "description": "Provider's response id."
+        },
+        "model": {
+          "type": "string",
+          "description": "Model id the provider reports having served."
+        },
+        "text": { "type": ["string", "null"] },
+        "tool_calls": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ToolCall" }
+        },
+        "finish_reason": {
+          "enum": ["stop", "length", "tool_calls", "content_filter", "other"]
+        },
+        "error": { "$ref": "#/$defs/ErrorDetail" }
+      }
+    },
+    "ErrorDetail": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Provider error for a failed call.",
+      "properties": {
+        "type": { "type": "string" },
+        "message": { "type": "string" },
+        "http_status": { "type": "integer" }
+      }
+    }
+  }
+}

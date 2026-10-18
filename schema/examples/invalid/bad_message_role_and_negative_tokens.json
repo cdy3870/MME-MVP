@@ -1,0 +1,12 @@
+{
+  "schema_version": "v0",
+  "id": "bad_0004",
+  "component": "support-triage",
+  "provider": "OpenAI",
+  "model": "gpt-4o-mini",
+  "started_at": "not-a-timestamp",
+  "usage": { "input_tokens": -5 },
+  "request": {
+    "messages": [{ "role": "developer", "content": "hi" }]
+  }
+}

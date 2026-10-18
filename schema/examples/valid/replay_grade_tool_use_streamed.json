@@ -1,0 +1,56 @@
+{
+  "schema_version": "v0",
+  "id": "rec_0002",
+  "component": "order-assistant",
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-5",
+  "started_at": "2026-10-12T14:05:00.000Z",
+  "completed_at": "2026-10-12T14:05:03.250Z",
+  "latency": { "total_ms": 3250, "time_to_first_token_ms": 610 },
+  "usage": { "input_tokens": 1180, "output_tokens": 96, "cached_input_tokens": 900 },
+  "request": {
+    "messages": [
+      { "role": "system", "content": "You help customers with their orders. Use tools to look things up." },
+      { "role": "user", "content": "Where is order 8841?" },
+      {
+        "role": "assistant",
+        "content": [
+          { "type": "text", "text": "Let me check that." },
+          { "type": "tool_call", "id": "toolu_01", "name": "get_order", "arguments": { "order_id": "8841" } }
+        ]
+      },
+      {
+        "role": "tool",
+        "content": [
+          { "type": "tool_result", "tool_call_id": "toolu_01", "content": "{\"status\":\"shipped\",\"eta\":\"2026-10-15\"}" }
+        ]
+      },
+      { "role": "user", "content": "And can you cancel it?" }
+    ],
+    "parameters": { "temperature": 0.2, "max_output_tokens": 1024 },
+    "tools": [
+      {
+        "name": "cancel_order",
+        "description": "Cancel an order that has not shipped.",
+        "input_schema": {
+          "type": "object",
+          "properties": { "order_id": { "type": "string" } },
+          "required": ["order_id"]
+        }
+      }
+    ],
+    "tool_choice": "auto",
+    "stream": true
+  },
+  "response": {
+    "status": "success",
+    "id": "msg_01XYZ",
+    "model": "claude-sonnet-4-5",
+    "text": null,
+    "tool_calls": [
+      { "id": "toolu_02", "name": "cancel_order", "arguments": { "order_id": "8841" } }
+    ],
+    "finish_reason": "tool_calls"
+  },
+  "source": { "type": "recorder", "tool_version": "0.1.0" }
+}

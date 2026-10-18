@@ -1,0 +1,8 @@
+{
+  "schema_version": "v1",
+  "id": "bad_0002",
+  "component": "support-triage",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "started_at": "2026-10-12T14:03:21.114Z"
+}

@@ -1,0 +1,28 @@
+{
+  "schema_version": "v0",
+  "id": "rec_0001",
+  "component": "support-triage",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "started_at": "2026-10-12T14:03:21.114Z",
+  "completed_at": "2026-10-12T14:03:22.002Z",
+  "latency": { "total_ms": 888 },
+  "usage": { "input_tokens": 412, "output_tokens": 37 },
+  "request": {
+    "messages": [
+      { "role": "system", "content": "Classify the support ticket as billing, bug, or other. Reply with one word." },
+      { "role": "user", "content": "I was charged twice for my subscription this month." }
+    ],
+    "parameters": { "temperature": 0, "max_output_tokens": 16 },
+    "stream": false
+  },
+  "response": {
+    "status": "success",
+    "id": "chatcmpl-abc123",
+    "model": "gpt-4o-mini-2024-07-18",
+    "text": "billing",
+    "finish_reason": "stop"
+  },
+  "metadata": { "category": "classification" },
+  "source": { "type": "recorder", "tool_version": "0.1.0" }
+}

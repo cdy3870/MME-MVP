@@ -1,0 +1,7 @@
+{
+  "schema_version": "v0",
+  "id": "bad_0001",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "started_at": "2026-10-12T14:03:21.114Z"
+}
