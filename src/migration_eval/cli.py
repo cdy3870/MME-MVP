@@ -8,6 +8,7 @@ import typer
 
 from migration_eval.capture.importer import import_jsonl
 from migration_eval.capture.sink import record_to_json
+from migration_eval.capture.grading import format_summary, summarize, grade
 
 app = typer.Typer(
     name="migration-eval",
@@ -37,6 +38,10 @@ def import_jsonl_command(
         out.write_text("".join(record_to_json(r) + "\n" for r in result.records), encoding="utf-8")
 
     typer.echo(f"Read {result.lines_read} lines: {len(result.records)} imported, {len(result.skipped)} skipped.")
+
+    results = [grade(r) for r in result.records]
+    typer.echo(format_summary(summarize(results)))
+
     for number, reason in result.skipped[:MAX_REASONS_SHOWN]:
         typer.echo(f"  line {number}: {reason}", err=True)
     if len(result.skipped) > MAX_REASONS_SHOWN:
