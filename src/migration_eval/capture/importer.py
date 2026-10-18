@@ -20,7 +20,8 @@ Raw exchanges go through the same provider parsers and `build_record` as the liv
 recorder, so a call produces the same record however it was captured.
 
 Lines that cannot be turned into a record are skipped and reported with a reason; the
-import never stops at the first bad line.
+import never stops at the first bad line. The exception is a file that mixes schema
+versions: that is rejected as a whole (REC-5) before any line is normalized.
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ from pydantic import ValidationError
 
 from migration_eval.capture.context import DEFAULT_COMPONENT
 from migration_eval.capture.exchange import Exchange
+from migration_eval.capture.file_checks import check_schema_versions
 from migration_eval.capture.normalize import build_record
 from migration_eval.capture.providers import PROVIDERS, Provider, detect
 from migration_eval.models import CallRecord
@@ -115,9 +117,16 @@ def _record_for(line: dict[str, Any], default_component: str) -> CallRecord:
 
 
 def import_jsonl(path: str | Path, *, component: str | None = None) -> ImportResult:
-    """Read `path` and normalize each line. `component` tags lines that do not name one."""
+    """Read `path` and normalize each line. `component` tags lines that do not name one.
+
+    Raises FileRejected if the file mixes schema versions.
+    """
     result = ImportResult()
     default_component = component or DEFAULT_COMPONENT
+
+    # Pass 1: parse every line. The version check needs the raw dicts and the whole file
+    # at once, so it cannot be done line by line while normalizing.
+    parsed: list[tuple[int, dict[str, Any]]] = []
     with open(path, encoding="utf-8") as f:
         for number, raw in enumerate(f, start=1):
             if not raw.strip():
@@ -125,11 +134,22 @@ def import_jsonl(path: str | Path, *, component: str | None = None) -> ImportRes
             result.lines_read += 1
             try:
                 line = json.loads(raw)
-                if not isinstance(line, dict):
-                    raise _Skip("line is not a JSON object")
-                result.records.append(_record_for(line, default_component))
             except json.JSONDecodeError:
                 result.skipped.append((number, "not valid JSON"))
-            except _Skip as skip:
-                result.skipped.append((number, str(skip)))
+                continue
+            if not isinstance(line, dict):
+                result.skipped.append((number, "line is not a JSON object"))
+                continue
+            parsed.append((number, line))
+
+    check_schema_versions(line for _, line in parsed)
+
+    # Pass 2: normalize.
+    for number, line in parsed:
+        try:
+            result.records.append(_record_for(line, default_component))
+        except _Skip as skip:
+            result.skipped.append((number, str(skip)))
+
+    result.skipped.sort()  # report skipped lines in file order across both passes
     return result

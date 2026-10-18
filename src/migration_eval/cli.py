@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import NoReturn
 
 import typer
 
-from migration_eval.capture.importer import import_jsonl
+from migration_eval.capture.file_checks import FileRejected, check_replay_grade
+from migration_eval.capture.grading import format_summary, grade, summarize
+from migration_eval.capture.importer import ImportResult, import_jsonl
 from migration_eval.capture.sink import record_to_json
-from migration_eval.capture.grading import format_summary, summarize, grade
 
 app = typer.Typer(
     name="migration-eval",
@@ -31,23 +33,47 @@ def import_jsonl_command(
         None, "--component", "-c", help="Component name for lines that do not set one."
     ),
 ) -> None:
-    """Normalize a JSONL log into v0 records."""
-    result = import_jsonl(path, component=component)
-    out = out or path.with_name(f"{path.stem}.v0.jsonl")
-    if result.records:
-        out.write_text("".join(record_to_json(r) + "\n" for r in result.records), encoding="utf-8")
+    """Normalize a JSONL log into v0 records.
+
+    A file that mixes schema versions, or has no replay-grade records, is rejected:
+    nothing is written and the exit code is 1.
+    """
+    try:
+        result = import_jsonl(path, component=component)
+    except FileRejected as rejected:  # mixed schema versions
+        _reject(rejected)
 
     typer.echo(f"Read {result.lines_read} lines: {len(result.records)} imported, {len(result.skipped)} skipped.")
 
-    results = [grade(r) for r in result.records]
-    typer.echo(format_summary(summarize(results)))
+    if not result.records:
+        _echo_skipped(result)
+        typer.echo("No records were imported, so nothing was written.", err=True)
+        raise typer.Exit(code=1)
 
+    summary = summarize(grade(r) for r in result.records)
+    try:
+        check_replay_grade(summary)
+    except FileRejected as rejected:  # nothing in the file can be replayed
+        _echo_skipped(result)
+        _reject(rejected)
+
+    typer.echo(format_summary(summary))
+    _echo_skipped(result)
+
+    # Written last, so a rejected file never leaves output behind.
+    out = out or path.with_name(f"{path.stem}.v0.jsonl")
+    out.write_text("".join(record_to_json(r) + "\n" for r in result.records), encoding="utf-8")
+    typer.echo(f"Wrote {out}")
+
+
+def _reject(rejected: FileRejected) -> NoReturn:
+    typer.echo(f"Rejected: {rejected}", err=True)
+    typer.echo("Nothing was written.", err=True)
+    raise typer.Exit(code=1)
+
+
+def _echo_skipped(result: ImportResult) -> None:
     for number, reason in result.skipped[:MAX_REASONS_SHOWN]:
         typer.echo(f"  line {number}: {reason}", err=True)
     if len(result.skipped) > MAX_REASONS_SHOWN:
         typer.echo(f"  ... and {len(result.skipped) - MAX_REASONS_SHOWN} more", err=True)
-
-    if not result.records:
-        typer.echo("No records were imported, so nothing was written.", err=True)
-        raise typer.Exit(code=1)
-    typer.echo(f"Wrote {out}")

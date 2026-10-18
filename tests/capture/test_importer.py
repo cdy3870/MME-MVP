@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
+from migration_eval.capture.file_checks import FileRejected
 from migration_eval.capture.importer import import_jsonl
 from migration_eval.cli import app
 
@@ -90,16 +92,28 @@ def test_timestamps_accept_epoch_milliseconds_and_naive_iso(tmp_path):
     assert a.started_at.tzinfo is not None and b.started_at.tzinfo is not None
 
 
-def test_existing_v0_records_pass_through_and_bad_ones_are_skipped(tmp_path):
-    bad_version = {**VALID_EXAMPLE, "schema_version": "v1"}
+def test_existing_v0_records_pass_through_and_invalid_ones_are_skipped(tmp_path):
     bad_record = {**VALID_EXAMPLE, "usage": {"input_tokens": -1}}
-    result = import_jsonl(write(tmp_path, VALID_EXAMPLE, bad_version, bad_record))
+    result = import_jsonl(write(tmp_path, VALID_EXAMPLE, bad_record))
 
     assert [r.id for r in result.records] == ["rec_0001"]
-    assert dict(result.skipped) == {
-        2: "unsupported schema_version 'v1'",
-        3: "not a valid v0 record (check: usage.input_tokens)",
-    }
+    assert dict(result.skipped) == {2: "not a valid v0 record (check: usage.input_tokens)"}
+
+
+def test_a_file_mixing_schema_versions_is_rejected_before_anything_is_imported(tmp_path):
+    path = write(tmp_path, VALID_EXAMPLE, {**VALID_EXAMPLE, "schema_version": "v1"})
+    with pytest.raises(FileRejected, match=r"v0 \(1 lines\), v1 \(1 lines\)"):
+        import_jsonl(path)
+
+
+def test_raw_exchange_lines_do_not_count_as_a_different_version(tmp_path):
+    result = import_jsonl(write(tmp_path, VALID_EXAMPLE, OPENAI_LINE))  # v0 record + raw line
+    assert len(result.records) == 2
+
+
+def test_skipped_lines_are_reported_in_file_order(tmp_path):
+    path = write(tmp_path, "{not json", OPENAI_LINE, {**OPENAI_LINE, "provider": "mistral"}, "[1]")
+    assert [n for n, _ in import_jsonl(path).skipped] == [1, 3, 4]
 
 
 def test_bad_lines_are_skipped_with_reasons_and_the_import_continues(tmp_path):
