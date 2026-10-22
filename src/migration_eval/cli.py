@@ -10,7 +10,16 @@ import typer
 from migration_eval.capture.file_checks import FileRejected, check_replay_grade
 from migration_eval.capture.grading import format_summary, grade, summarize
 from migration_eval.capture.importer import ImportResult, import_jsonl
+from migration_eval.capture.recorder import DEFAULT_PATH as DEFAULT_RECORDS_PATH
 from migration_eval.capture.sink import record_to_json
+from migration_eval.export import (
+    build_archive,
+    default_export_path,
+    format_export_summary,
+    load_records,
+    parse_since,
+    summarize_export,
+)
 
 app = typer.Typer(
     name="migration-eval",
@@ -63,6 +72,55 @@ def import_jsonl_command(
     # Written last, so a rejected file never leaves output behind.
     out = out or path.with_name(f"{path.stem}.v0.jsonl")
     out.write_text("".join(record_to_json(r) + "\n" for r in result.records), encoding="utf-8")
+    typer.echo(f"Wrote {out}")
+
+
+@app.command("export")
+def export_command(
+    since: str = typer.Option("7d", "--since", help="Only export records from this window, e.g. 7d or 24h."),
+    records: Path = typer.Option(
+        Path(DEFAULT_RECORDS_PATH),
+        "--records",
+        exists=True,
+        dir_okay=False,
+        readable=True,
+        help="v0 JSONL file to export (the recorder's output or an import).",
+    ),
+    out: Path | None = typer.Option(
+        None, "--out", "-o", help="Where to write the export. Default: migration-eval-export-<date>.tar.gz"
+    ),
+) -> None:
+    """Pack recorded calls into one file for upload, after showing a summary.
+
+    The export is rejected, and nothing is written, if the file mixes schema versions or
+    nothing in the window can be replayed.
+    """
+    try:
+        window = parse_since(since)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--since") from None
+
+    try:
+        loaded = load_records(records, window)
+    except FileRejected as rejected:  # bad line or mixed schema versions
+        _reject(rejected)
+
+    if not loaded:
+        typer.echo(f"No records in the last {since}, so there is nothing to export.", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        check_replay_grade(summarize(grade(r) for r in loaded))
+    except FileRejected as rejected:  # nothing in the window can be replayed
+        _reject(rejected)
+
+    archive = build_archive(loaded)
+    typer.echo(format_export_summary(summarize_export(loaded, len(archive))))
+
+    # Written last, so a rejected export never leaves a file behind.
+    out = out or default_export_path()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(archive)
     typer.echo(f"Wrote {out}")
 
 
