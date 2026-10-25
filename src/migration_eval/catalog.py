@@ -20,6 +20,8 @@ from pydantic import ValidationError
 
 from migration_eval.models.catalog import Catalog, Offering
 
+import hashlib
+
 __all__ = ["Catalog", "CatalogError", "Offering", "load_catalog"]
 
 MAX_PROBLEMS_SHOWN = 20
@@ -162,3 +164,45 @@ def _semantic_problems(catalog: Catalog) -> list[str]:
             positions = ", ".join(f"offerings[{i}]" for i in indexes)
             problems.append(f"{provider}/{model} is listed more than once ({positions})")
     return problems
+
+
+# --- what a report records about the catalog it used (CAT-6) -------------------------------
+
+
+def catalog_hash(path: Path) -> str:
+    """The SHA-256 (hex) of the catalog file's raw bytes.
+
+    Hash the bytes exactly as stored, with no parsing or reformatting, so the same file always
+    gives the same hash and any edit, even to a comment, changes it. Reading the file raises
+    the normal FileNotFoundError when it is missing.
+    """
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def catalog_as_of(catalog: Catalog) -> date:
+    """The catalog's as-of date for a report: the OLDEST `as_of` among its offerings.
+
+    A report is only as fresh as its stalest figure, so the oldest date is the honest one.
+    (The alternative is the newest; say so here if you change it.) `as_of` is text, so parse
+    it with `date.fromisoformat`. A loaded catalog always has at least one offering.
+    """
+
+    return min(date.fromisoformat(o.as_of) for o in catalog.offerings)
+    
+
+
+def catalog_provenance(path: Path) -> dict[str, str]:
+    """What every report records about its catalog (CAT-6, and NFR-11's reproducibility):
+
+        {"catalog_sha256": "<hex>", "catalog_as_of": "YYYY-MM-DD"}
+
+    Load the catalog at `path` (raising CatalogError if it is invalid), then combine
+    `catalog_hash` and `catalog_as_of`.
+    """
+
+    catalog = load_catalog(path)
+
+    return {
+        "catalog_sha256": catalog_hash(path),
+        "catalog_as_of": catalog_as_of(catalog).isoformat(),
+    }

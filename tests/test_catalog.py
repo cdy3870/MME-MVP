@@ -6,7 +6,17 @@ from pathlib import Path
 
 import pytest
 
-from migration_eval.catalog import MAX_PROBLEMS_SHOWN, CatalogError, load_catalog
+import hashlib
+from datetime import date
+
+from migration_eval.catalog import (
+    MAX_PROBLEMS_SHOWN,
+    CatalogError,
+    catalog_as_of,
+    catalog_hash,
+    catalog_provenance,
+    load_catalog,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 REAL_CATALOG = ROOT / "catalog" / "catalog.yaml"
@@ -256,3 +266,55 @@ def test_a_huge_number_of_problems_is_capped(tmp_path):
     assert f"has {MAX_PROBLEMS_SHOWN + 5} problems" in message
     assert "... and 5 more" in message
     assert message.count("as_of is missing") == MAX_PROBLEMS_SHOWN
+
+
+# --- what a report records about its catalog (CAT-6) --------------------------------------
+
+
+def test_the_hash_is_the_sha256_of_the_raw_file_bytes(tmp_path):
+    path = write(tmp_path, catalog_text(OFFERING))
+    assert catalog_hash(path) == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert len(catalog_hash(path)) == 64
+
+
+def test_windows_line_endings_are_hashed_as_they_are_not_translated(tmp_path):
+    path = tmp_path / "catalog.yaml"
+    path.write_bytes(catalog_text(OFFERING).replace("\n", "\r\n").encode())
+    assert catalog_hash(path) == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert catalog_hash(path) != hashlib.sha256(catalog_text(OFFERING).encode()).hexdigest()
+
+
+def test_the_hash_is_stable_and_any_edit_even_a_comment_changes_it(tmp_path):
+    path = write(tmp_path, catalog_text(OFFERING))
+    before = catalog_hash(path)
+    assert catalog_hash(path) == before
+    path.write_text(catalog_text(OFFERING) + "# a comment\n")
+    assert catalog_hash(path) != before
+
+
+def test_the_hash_of_a_missing_file_raises_the_normal_file_error(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        catalog_hash(tmp_path / "nope.yaml")
+
+
+def test_the_catalog_as_of_is_the_oldest_offering_date(tmp_path):
+    old = with_change('"2026-10-24"', '"2026-08-01"').replace("model: gpt-4o", "model: old")
+    new = with_change('"2026-10-24"', '"2026-10-30"').replace("model: gpt-4o", "model: new")
+    catalog = load_catalog(write(tmp_path, catalog_text(OFFERING, old, new)))
+    assert catalog_as_of(catalog) == date(2026, 8, 1)
+
+
+def test_provenance_is_two_strings_ready_for_the_json_report(tmp_path):
+    path = write(tmp_path, catalog_text(OFFERING))
+    assert catalog_provenance(path) == {"catalog_sha256": catalog_hash(path), "catalog_as_of": "2026-10-24"}
+
+
+def test_provenance_of_an_invalid_catalog_raises_instead_of_recording_it(tmp_path):
+    with pytest.raises(CatalogError):
+        catalog_provenance(write(tmp_path, "offerings: []\n"))
+
+
+def test_provenance_of_the_real_catalog():
+    provenance = catalog_provenance(REAL_CATALOG)
+    assert len(provenance["catalog_sha256"]) == 64
+    date.fromisoformat(provenance["catalog_as_of"])  # a real YYYY-MM-DD date
