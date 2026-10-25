@@ -1,0 +1,126 @@
+# Catalog of API-hosted model offerings that candidates are drawn from (CAT-1).
+#
+# Hand-maintained and reviewed in pull requests. The rules live in catalog.schema.json,
+# which CI checks this file against (CAT-2).
+#
+# !! UNVERIFIED GUESSES !! Every figure below was written without checking the provider's
+# page. Each entry says whether the numbers were recalled from memory (and may be stale)
+# or are a pure guess. `as_of` here is the day the placeholder was written, NOT a date the
+# figures were checked. Before this catalog is used for a real run, check each entry
+# against its source_url, correct it, and set as_of to the day you checked.
+#
+# For each offering:
+#   context_window  tokens the model accepts across input and output
+#   tool_support    true or false, whether it supports tool/function calling
+#   regions         lowercase identifiers where the provider can serve it (e.g. us, eu)
+#   prices          USD per one million tokens; cached_input is optional
+#   as_of           YYYY-MM-DD, the day you checked the figures (quotes are optional)
+#   source_url      the https page the figures came from, so a reviewer can verify them
+#
+# Each (provider, model) pair may appear only once. No retirement dates or lifecycle
+# fields in the MVP.
+
+offerings:
+  # --- Anthropic -----------------------------------------------------------------------
+  # Claude 5 family: PURE GUESS. Prices follow the earlier Haiku/Sonnet/Opus tiers; the
+  # Fable tier is a guess at a premium tier above Opus.
+  - provider: anthropic
+    model: claude-haiku-5-5
+    context_window: 200000
+    tool_support: true
+    regions: [us, eu]
+    prices_usd_per_million_tokens:
+      input: 1.00
+      output: 5.00
+      cached_input: 0.10
+    as_of: "2026-10-24"
+    source_url: https://docs.anthropic.com/en/docs/about-claude/pricing
+
+  - provider: anthropic
+    model: claude-sonnet-5-5
+    context_window: 200000
+    tool_support: true
+    regions: [us, eu]
+    prices_usd_per_million_tokens:
+      input: 3.00
+      output: 15.00
+      cached_input: 0.30
+    as_of: "2026-10-24"
+    source_url: https://docs.anthropic.com/en/docs/about-claude/pricing
+
+  - provider: anthropic
+    model: claude-opus-5-5
+    context_window: 200000
+    tool_support: true
+    regions: [us, eu]
+    prices_usd_per_million_tokens:
+      input: 5.00
+      output: 25.00
+      cached_input: 0.50
+    as_of: "2026-10-24"
+    source_url: https://docs.anthropic.com/en/docs/about-claude/pricing
+
+  - provider: anthropic
+    model: claude-fable-5-1
+    context_window: 200000
+    tool_support: true
+    regions: [us, eu]
+    prices_usd_per_million_tokens:
+      input: 15.00
+      output: 75.00
+      cached_input: 1.50
+    as_of: "2026-10-24"
+    source_url: https://docs.anthropic.com/en/docs/about-claude/pricing
+
+  # --- OpenAI --------------------------------------------------------------------------
+  # Recalled from memory (as of 2025); prices and ids may be stale.
+  - provider: openai
+    model: gpt-4o
+    context_window: 128000
+    tool_support: true
+    regions: [us, eu]
+    prices_usd_per_million_tokens:
+      input: 2.50
+      output: 10.00
+      cached_input: 1.25
+    as_of: "2026-10-24"
+    source_url: https://openai.com/api/pricing/
+
+  - provider: openai
+    model: gpt-4o-mini
+    context_window: 128000
+    tool_support: true
+    regions: [us, eu]
+    prices_usd_per_million_tokens:
+      input: 0.15
+      output: 0.60
+      cached_input: 0.075
+    as_of: "2026-10-24"
+    source_url: https://openai.com/api/pricing/
+
+  # --- Google Gemini -------------------------------------------------------------------
+  # Recalled from memory (as of 2025); prices and ids may be stale.
+  - provider: gemini
+    model: gemini-2.0-flash
+    context_window: 1048576
+    tool_support: true
+    regions: [us, eu]
+    prices_usd_per_million_tokens:
+      input: 0.10
+      output: 0.40
+    as_of: "2026-10-24"
+    source_url: https://ai.google.dev/gemini-api/docs/pricing
+
+  - provider: gemini
+    model: gemini-2.5-flash
+    context_window: 1048576
+    tool_support: true
+    regions: [us, eu]
+    prices_usd_per_million_tokens:
+      input: 0.30
+      output: 2.50
+    as_of: "2026-10-24"
+    source_url: https://ai.google.dev/gemini-api/docs/pricing
+
+  # TODO: the ERD calls for about 15 offerings in total. Copy a block above for each
+  # further model, using the ids from each provider's current model list.
