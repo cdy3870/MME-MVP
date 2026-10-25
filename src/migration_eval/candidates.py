@@ -20,16 +20,24 @@ Open decisions (see the notes on CAT-3):
     * when the profile has no token counts the context check cannot run, so it keeps the offering
     * the incumbent is not in the ERD's list of rules, but excluding it is assumed
 
-Stage 2 (predicted cost, CAT-4) is separate and runs on what Stage 1 keeps. The CLI
-`migration-eval candidates` and the `POST /candidates` endpoint come later, once uploads exist.
+Stage 2 (predicted cost, CAT-4, `stage_two`) runs on what Stage 1 keeps. CAT-5
+(`dropped_for_report`, `format_dropped`) turns both stages' drops into the listing the report
+shows. The CLI `migration-eval candidates` and the `POST /candidates` endpoint come later,
+once uploads exist.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
+from typing import Any
 
 from migration_eval.catalog import Catalog, Offering
+from migration_eval.models import CallRecord
 from migration_eval.profile import Profile
+
+from migration_eval.pricing import predicted_monthly_cost
+
 
 # Every catalog offering is API-hosted in the MVP (self-hosted candidates are v1), so the
 # only hosting option an offering can satisfy is this one.
@@ -123,3 +131,81 @@ def stage_one(
             kept.append(offering)
 
     return kept, dropped
+
+
+# --- Stage 2 (CAT-4) -----------------------------------------------------------------------
+
+
+def stage_two(
+    offerings: list[Offering],
+    records: list[CallRecord],
+    window: timedelta,
+    cost_cap_usd: float,
+) -> tuple[list[Offering], list[tuple[Offering, list[str]]]]:
+    """Drop offerings whose predicted monthly cost is above `cost_cap_usd`.
+
+    Run it on what `stage_one` kept, with the component's records and the period they cover
+    (`window`, passed to `pricing.predicted_monthly_cost`). Returns `(kept, dropped)` in the
+    same shape as `stage_one`, both in input order, with a reason such as
+    "predicted $1,250.00 a month, cap is $1,000.00".
+
+    A cost exactly equal to the cap passes. When no cost can be predicted (no token counts)
+    the offering is kept, as in `check_context`: say so in the module docstring's open
+    decisions if you keep that choice.
+    """
+
+    kept: list[Offering] = []
+    dropped: list[tuple[Offering, list[str]]] = []
+
+    for offering in offerings:
+        monthly_cost = predicted_monthly_cost(offering, records, window)
+
+        if monthly_cost is not None and monthly_cost > cost_cap_usd:
+            reason = f"predicted ${monthly_cost:,.2f} a month, cap is ${cost_cap_usd:,.2f}"
+            dropped.append((offering, [reason]))
+
+        else:
+            kept.append(offering)
+
+
+    return kept, dropped
+
+# --- Reporting the dropped candidates (CAT-5) ----------------------------------------------
+
+
+def dropped_for_report(
+    stage_one_dropped: list[tuple[Offering, list[str]]],
+    stage_two_dropped: list[tuple[Offering, list[str]]],
+) -> list[dict[str, Any]]:
+    """Every dropped candidate with its reasons, as plain data the JSON report can hold.
+
+    One dict per candidate: `{"provider": ..., "model": ..., "stage": 1 or 2, "reasons": [...]}`.
+    Stage 1 drops come first, then stage 2, each in the order given. A candidate dropped in
+    stage 1 never reaches stage 2, so none appears twice.
+    """
+    dropped = []
+    for candidate in stage_one_dropped:
+        dropped.append({"provider": candidate[0].provider, "model": candidate[0].model, "stage": 1, "reasons": candidate[1]})
+
+    for candidate in stage_two_dropped:
+        dropped.append({"provider": candidate[0].provider, "model": candidate[0].model, "stage": 2, "reasons": candidate[1]})
+
+    return dropped
+
+def format_dropped(dropped: list[dict[str, Any]]) -> str:
+    """Render `dropped_for_report`'s output as text for the terminal and the HTML report.
+
+    One block per candidate, a heading like `openai/gpt-4o (dropped in stage 1)` followed by
+    each reason on its own indented line. Return a short sentence when nothing was dropped.
+    """
+    report = ""
+    for cand in dropped:
+        report += f"{cand['provider']}/{cand['model']} (dropped in stage {cand['stage']})\n"
+        for reason in cand["reasons"]:
+            report += f"  {reason}\n"
+
+    if len(dropped) == 0:
+        return "No models were dropped."
+
+    return report
+
