@@ -1,9 +1,9 @@
-"""Generate the Pydantic models and TypeScript types from the record schema.
+"""Generate the Pydantic models (and TypeScript types) from the JSON schemas.
 
-schema/record.v0.schema.json is the only source of truth (REC-2). Never edit
-the generated files by hand; change the schema and rerun this script.
+Each schema is the only source of truth for its models (REC-2, CAT-1). Never edit the
+generated files by hand; change the schema and rerun this script.
 
-    python scripts/generate_models.py           # regenerate both outputs
+    python scripts/generate_models.py           # regenerate every output
     python scripts/generate_models.py --check   # fail if outputs are stale (for CI)
 
 Requires the dev environment: `pip install -e ".[dev]"` and `npm ci`.
@@ -15,22 +15,48 @@ import argparse
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SCHEMA = ROOT / "schema" / "record.v0.schema.json"
-PY_OUT = ROOT / "src" / "migration_eval" / "models" / "record.py"
-TS_OUT = ROOT / "ts" / "record.v0.d.ts"
+MODELS = ROOT / "src" / "migration_eval" / "models"
 JSON2TS = ROOT / "node_modules" / ".bin" / "json2ts"
 
-PY_HEADER = (
-    "# DO NOT EDIT. Generated from schema/record.v0.schema.json by "
-    "scripts/generate_models.py.\n"
-    "# To change these models, edit the schema and rerun the script."
+RECORD_SCHEMA = ROOT / "schema" / "record.v0.schema.json"
+TS_OUT = ROOT / "ts" / "record.v0.d.ts"
+
+
+@dataclass(frozen=True)
+class PythonTarget:
+    schema: Path
+    out: Path
+    # Extra datamodel-codegen flags for this schema only, so one schema's needs do not
+    # change another's generated file.
+    extra_args: tuple[str, ...] = field(default_factory=tuple)
+
+
+PYTHON_TARGETS = (
+    PythonTarget(RECORD_SCHEMA, MODELS / "record.py"),
+    # Type aliases make constrained strings (like Region) plain `str` values instead of
+    # wrapper objects, so `"us" in offering.regions` works.
+    PythonTarget(
+        ROOT / "catalog" / "catalog.schema.json",
+        MODELS / "catalog.py",
+        extra_args=("--use-type-alias",),
+    ),
 )
 
 
-def generate_python(out: Path) -> None:
+def py_header(schema: Path) -> str:
+    return (
+        f"# DO NOT EDIT. Generated from {schema.relative_to(ROOT).as_posix()} by "
+        "scripts/generate_models.py.\n"
+        "# To change these models, edit the schema and rerun the script."
+    )
+
+
+def generate_python(target: PythonTarget, out: Path) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(
         [
@@ -38,7 +64,7 @@ def generate_python(out: Path) -> None:
             "-m",
             "datamodel_code_generator",
             "--input",
-            str(SCHEMA),
+            str(target.schema),
             "--input-file-type",
             "jsonschema",
             "--output",
@@ -58,7 +84,8 @@ def generate_python(out: Path) -> None:
             "black",
             "isort",
             "--custom-file-header",
-            PY_HEADER,
+            py_header(target.schema),
+            *target.extra_args,
         ],
         check=True,
         cwd=ROOT,
@@ -70,10 +97,19 @@ def generate_typescript(out: Path) -> None:
         sys.exit(f"{JSON2TS} not found. Run `npm ci` first.")
     out.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(
-        [str(JSON2TS), "--input", str(SCHEMA), "--output", str(out)],
+        [str(JSON2TS), "--input", str(RECORD_SCHEMA), "--output", str(out)],
         check=True,
         cwd=ROOT,
     )
+
+
+def outputs() -> list[tuple[Path, Callable[[Path], None]]]:
+    """Every generated file, paired with a function that writes it to a given path."""
+    jobs: list[tuple[Path, Callable[[Path], None]]] = [
+        (t.out, lambda path, t=t: generate_python(t, path)) for t in PYTHON_TARGETS
+    ]
+    jobs.append((TS_OUT, generate_typescript))
+    return jobs
 
 
 def main() -> int:
@@ -86,15 +122,14 @@ def main() -> int:
     args = parser.parse_args()
 
     if not args.check:
-        generate_python(PY_OUT)
-        generate_typescript(TS_OUT)
-        print(f"wrote {PY_OUT.relative_to(ROOT)}")
-        print(f"wrote {TS_OUT.relative_to(ROOT)}")
+        for target, generate in outputs():
+            generate(target)
+            print(f"wrote {target.relative_to(ROOT)}")
         return 0
 
     stale = []
     with tempfile.TemporaryDirectory() as tmp:
-        for target, generate in ((PY_OUT, generate_python), (TS_OUT, generate_typescript)):
+        for target, generate in outputs():
             fresh = Path(tmp) / target.name
             generate(fresh)
             if not target.exists() or target.read_bytes() != fresh.read_bytes():
