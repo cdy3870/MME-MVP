@@ -40,6 +40,8 @@ class ReplayResult:
     output_tokens: int | None
     latency_ms: float | None
     error: str | None  # None on success
+    converted: bool = False  # the request was converted for another provider (EVL-10)
+    unconverted_fields: tuple[str, ...] = ()  # "path: reason" for what the conversion could not carry
 
 
 # Sends one request to a model: (provider, model, request) -> result. It reports a 429 by
