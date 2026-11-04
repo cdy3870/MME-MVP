@@ -1,0 +1,48 @@
+{
+  "schema_version": "v0",
+  "generated_at": "2026-11-02T15:04:05Z",
+  "component": "legacy-summarizer",
+  "catalog": {
+    "sha256": "9b1f6c0e4a7d2358e1c4b7a90d3f5e6218a4c7b0d9e2f13456a8b7c0d1e2f3a4",
+    "as_of": "2026-10-24"
+  },
+  "incumbent": {
+    "provider": "openai",
+    "model": "gpt-4",
+    "latency": {
+      "p50_ms": null,
+      "p95_ms": null,
+      "n": 0,
+      "failed": 0
+    },
+    "cost_per_request_usd": null
+  },
+  "sample": {
+    "records_available": 12,
+    "requests_replayed": 0,
+    "replay_speed": 1.0,
+    "seed": 1
+  },
+  "noise_floor": {
+    "value": null,
+    "runs": 0,
+    "requests": 0
+  },
+  "thresholds": {
+    "min_requests": 50,
+    "safe_margin": 0.0,
+    "caveat_margin": 0.05,
+    "min_category_requests": 10
+  },
+  "candidates": [],
+  "dropped_candidates": [
+    {
+      "provider": "openai",
+      "model": "gpt-4o",
+      "stage": 1,
+      "reasons": [
+        "it is the model the traffic already uses"
+      ]
+    }
+  ]
+}

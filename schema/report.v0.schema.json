@@ -1,0 +1,508 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:migration-eval:schema:report:v0",
+  "title": "Report",
+  "description": "The result of evaluating candidate models for one component (schema v0): the incumbent's baseline, the noise floor, and per candidate a verdict with the numbers behind it. Produced by the evaluator and read by the frontend. It holds only aggregates and counts, never prompts or model outputs, so partner data does not leave the worker through it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generated_at",
+    "component",
+    "catalog",
+    "incumbent",
+    "sample",
+    "noise_floor",
+    "thresholds",
+    "candidates",
+    "dropped_candidates"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "v0"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "component": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The application component this report is about (one report per component)."
+    },
+    "catalog": {
+      "$ref": "#/$defs/CatalogInfo"
+    },
+    "incumbent": {
+      "$ref": "#/$defs/Incumbent"
+    },
+    "sample": {
+      "$ref": "#/$defs/Sample"
+    },
+    "noise_floor": {
+      "$ref": "#/$defs/NoiseFloor"
+    },
+    "thresholds": {
+      "$ref": "#/$defs/Thresholds"
+    },
+    "candidates": {
+      "type": "array",
+      "description": "Every candidate that was replayed, in the order they were run.",
+      "items": {
+        "$ref": "#/$defs/Candidate"
+      }
+    },
+    "dropped_candidates": {
+      "type": "array",
+      "description": "Catalog offerings that were never replayed, each with the reasons (CAT-5).",
+      "items": {
+        "$ref": "#/$defs/DroppedCandidate"
+      }
+    }
+  },
+  "$defs": {
+    "CatalogInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sha256",
+        "as_of"
+      ],
+      "description": "Which catalog the candidates came from, so a report can be reproduced (CAT-6).",
+      "properties": {
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "as_of": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "The oldest as_of date among the catalog's offerings."
+        }
+      }
+    },
+    "LatencySummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "p50_ms",
+        "p95_ms",
+        "n",
+        "failed"
+      ],
+      "properties": {
+        "p50_ms": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Null when no call succeeded."
+        },
+        "p95_ms": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "n": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Calls the percentiles are over."
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Calls that errored, left out of the percentiles."
+        }
+      }
+    },
+    "Incumbent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "model",
+        "latency",
+        "cost_per_request_usd"
+      ],
+      "description": "The model the partner uses today, measured by replaying it now, as the baseline candidates are compared with.",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]*$"
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "latency": {
+          "$ref": "#/$defs/LatencySummary"
+        },
+        "cost_per_request_usd": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        }
+      }
+    },
+    "Sample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "records_available",
+        "requests_replayed",
+        "replay_speed",
+        "seed"
+      ],
+      "properties": {
+        "records_available": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Replay-grade records for this component in the upload."
+        },
+        "requests_replayed": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Size of the sample every candidate was drawn from."
+        },
+        "replay_speed": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "1 is the logged pace. Latency is only comparable at 1."
+        },
+        "seed": {
+          "type": "integer"
+        }
+      }
+    },
+    "NoiseFloor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "value",
+        "runs",
+        "requests"
+      ],
+      "description": "How much the incumbent disagrees with itself (EVL-1). A candidate is judged against this, not against perfect agreement.",
+      "properties": {
+        "value": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Null when it could not be measured."
+        },
+        "runs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "requests": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "Thresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "min_requests",
+        "safe_margin",
+        "caveat_margin",
+        "min_category_requests"
+      ],
+      "description": "The documented numbers behind the verdicts (EVL-8), shown so a verdict can be explained and re-run.",
+      "properties": {
+        "min_requests": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "safe_margin": {
+          "type": "number",
+          "minimum": 0
+        },
+        "caveat_margin": {
+          "type": "number",
+          "minimum": 0
+        },
+        "min_category_requests": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "Agreement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agreed",
+        "n",
+        "rate",
+        "ci_low",
+        "ci_high"
+      ],
+      "description": "Requests where the candidate agreed with the incumbent, with a bootstrap 95% confidence interval (EVL-6).",
+      "properties": {
+        "agreed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "n": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rate": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Null when n is 0."
+        },
+        "ci_low": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "ci_high": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "CategoryAgreement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "category",
+        "agreement"
+      ],
+      "properties": {
+        "category": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agreement": {
+          "$ref": "#/$defs/Agreement"
+        }
+      }
+    },
+    "Cost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "total_usd",
+        "per_request_usd"
+      ],
+      "description": "Actual cost of the replayed calls at the catalog prices (EVL-7).",
+      "properties": {
+        "total_usd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "per_request_usd": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Null when no call succeeded."
+        }
+      }
+    },
+    "UnconvertedField": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "field",
+        "requests"
+      ],
+      "properties": {
+        "field": {
+          "type": "string",
+          "minLength": 1,
+          "description": "A path and the reason, e.g. \"parameters.seed: Anthropic has no seed\"."
+        },
+        "requests": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How many replayed requests this affected."
+        }
+      }
+    },
+    "Conversion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requests",
+        "converted_requests",
+        "unconverted"
+      ],
+      "description": "Whether the candidate was sent the exact logged request or a converted one (EVL-10). When requests were converted, the agreement also reflects the conversion, not only the model.",
+      "properties": {
+        "requests": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "converted_requests": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unconverted": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UnconvertedField"
+          }
+        }
+      }
+    },
+    "CheckFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "check",
+        "requests"
+      ],
+      "description": "How many requests failed a deterministic check (EVL-4), which settles them as different without a judge.",
+      "properties": {
+        "check": {
+          "enum": [
+            "error",
+            "output_schema",
+            "tool_calls",
+            "refusal"
+          ]
+        },
+        "requests": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "Verdict": {
+      "enum": [
+        "safe_to_swap",
+        "swap_with_caveats",
+        "do_not_swap",
+        "insufficient_data"
+      ]
+    },
+    "Candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "model",
+        "verdict",
+        "explanation",
+        "stopped_early",
+        "requests_run",
+        "agreement",
+        "by_category",
+        "latency",
+        "cost",
+        "conversion",
+        "check_failures"
+      ],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]*$"
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "verdict": {
+          "$ref": "#/$defs/Verdict"
+        },
+        "explanation": {
+          "type": "string",
+          "minLength": 1,
+          "description": "One or two sentences naming the numbers behind the verdict."
+        },
+        "stopped_early": {
+          "type": "boolean",
+          "description": "Stopped before the full sample because it was clearly below the noise floor (EVL-2)."
+        },
+        "requests_run": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "agreement": {
+          "$ref": "#/$defs/Agreement"
+        },
+        "by_category": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CategoryAgreement"
+          }
+        },
+        "latency": {
+          "$ref": "#/$defs/LatencySummary"
+        },
+        "cost": {
+          "$ref": "#/$defs/Cost"
+        },
+        "conversion": {
+          "$ref": "#/$defs/Conversion"
+        },
+        "check_failures": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CheckFailure"
+          }
+        }
+      }
+    },
+    "DroppedCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "model",
+        "stage",
+        "reasons"
+      ],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]*$"
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "stage": {
+          "enum": [
+            1,
+            2
+          ],
+          "description": "1 is the capability filter, 2 the cost filter."
+        },
+        "reasons": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}
