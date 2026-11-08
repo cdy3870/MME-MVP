@@ -20,6 +20,8 @@ from migration_eval.export import (
     parse_since,
     summarize_export,
 )
+from migration_eval.gpu.profile import DEFAULT_PROFILE_PATH
+from migration_eval.gpu.samples import DEFAULT_DURATION_S, DEFAULT_INTERVAL_S
 
 app = typer.Typer(
     name="migration-eval",
@@ -28,6 +30,8 @@ app = typer.Typer(
 )
 import_app = typer.Typer(help="Normalize existing logs into v0 records.", no_args_is_help=True)
 app.add_typer(import_app, name="import")
+gpu_app = typer.Typer(help="Read GPU utilization and topology for the GPU report.", no_args_is_help=True)
+app.add_typer(gpu_app, name="gpu")
 
 MAX_REASONS_SHOWN = 10
 
@@ -122,6 +126,31 @@ def export_command(
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(archive)
     typer.echo(f"Wrote {out}")
+
+
+@gpu_app.command("capture")
+def gpu_capture_command(
+    duration: float = typer.Option(
+        DEFAULT_DURATION_S, "--duration", min=1, help="How long to sample, in seconds."
+    ),
+    interval: float = typer.Option(
+        DEFAULT_INTERVAL_S, "--interval", min=0.1, help="Seconds between samples."
+    ),
+    out: Path = typer.Option(DEFAULT_PROFILE_PATH, "--out", "-o", help="Where to write the profile."),
+) -> None:
+    """Sample this machine's GPUs with nvidia-smi and write gpu_profile.json (GPU-1).
+
+    Run it on the GPU machine during normal traffic. `export` includes the profile.
+    """
+    # TODO(GPU-1): wire the pieces together:
+    #   1. find_nvidia_smi() + make_runner() + check_available(); on NvidiaSmiError echo the
+    #      message to stderr and exit 1.
+    #   2. take_snapshot(run); echo GPU count, model and driver version.
+    #   3. resolve_fields(run), then collect(run, interval, duration, on_tick=<progress line>).
+    #   4. Build GpuProfile (hostname = socket.gethostname(), settings.interrupted if Ctrl-C
+    #      cut the run short), write_profile(profile, out), echo "Wrote <out>".
+    #   GPU-2 (idle warning) hooks in after step 3.
+    raise NotImplementedError("gpu capture is not implemented yet (MOD-121)")
 
 
 def _reject(rejected: FileRejected) -> NoReturn:
