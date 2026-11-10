@@ -23,6 +23,7 @@ from migration_eval.export import (
     parse_since,
     summarize_export,
 )
+from migration_eval.keys import MissingKeys, read_keys
 from migration_eval.models import CallRecord, Report
 from migration_eval.profile import build_profile, records_for_component
 from migration_eval.request_builders import make_complete
@@ -38,9 +39,6 @@ app.add_typer(import_app, name="import")
 
 MAX_REASONS_SHOWN = 10
 
-# The environment variable that holds each provider's API key. Keys are read from here and
-# never from a file, and are never printed.
-KEY_VARIABLES = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY", "gemini": "GEMINI_API_KEY"}
 TIERS = ("smoke", "full")
 REQUEST_TIMEOUT_SECONDS = 60  # one stuck call must not hang the whole run
 
@@ -149,6 +147,9 @@ def run_command(
     catalog: Path = typer.Option(Path("catalog/catalog.yaml"), "--catalog", exists=True, dir_okay=False),
     cost_cap: float | None = typer.Option(None, "--cost-cap", help="Drop candidates predicted above this per month."),
     out: Path = typer.Option(Path("report.json"), "--out", "-o", help="Where to write the report."),
+    speed: float = typer.Option(
+        1.0, "--speed", help="1 replays at the logged pace, so logs spread over days take days. Higher compresses the gaps; latency is only comparable at 1."
+    ),
     yes: bool = typer.Option(False, "--yes", help="Do not ask before sending prompts to providers."),
 ) -> None:
     """Replay a component's logged calls against candidate models and write a report.
@@ -163,6 +164,8 @@ def run_command(
         raise typer.BadParameter(f"must be one of: {', '.join(TIERS)}", param_hint="--tier")
     if cap <= 0:
         raise typer.BadParameter("must be more than 0", param_hint="--cap")
+    if speed <= 0:
+        raise typer.BadParameter("must be more than 0", param_hint="--speed")
     if not allow:  # deny-all is the default, and `run_evaluation` would refuse it anyway, after asking
         raise typer.BadParameter(
             "no provider is allowed, so no candidate could be called. Pass --allow <provider> for each one.",
@@ -190,7 +193,7 @@ def run_command(
 
     #   4. build a `RunConfig` from the options (`allow_list=frozenset(allow)`)
 
-    config = RunConfig(component=component, tier=tier, spending_cap_usd=cap, allow_list=frozenset(allow), cost_cap_usd=cost_cap)
+    config = RunConfig(component=component, tier=tier, spending_cap_usd=cap, allow_list=frozenset(allow), cost_cap_usd=cost_cap, replay_speed=speed)
 
     #   5. ask for confirmation with `_confirm_send` unless --yes; exit when the answer is no
 
@@ -220,32 +223,16 @@ def run_command(
 
 
 def _read_provider_keys(allowed: list[str]) -> dict[str, str]:
-    """The API keys for the allowed providers, read from `KEY_VARIABLES`' environment variables.
+    """The API keys for the allowed providers, read from the environment (see `keys.py`).
 
-    Raise typer.BadParameter naming the variable (never its value) when an allowed provider has no
-    key, or when a provider is not one we have a builder for. Return only the allowed providers'
-    keys, so a key for a provider that is not allowed is never even loaded into the run.
+    A missing key or an unsupported provider becomes a usage error that names the variable, never its value.
     """
-
-    unknown = [p for p in allowed if p not in KEY_VARIABLES]
-    if unknown:
-        raise typer.BadParameter(
-            f"no support for provider {', '.join(map(repr, unknown))} (supported: {', '.join(sorted(KEY_VARIABLES))})",
-            param_hint="--allow",
-        )
-
-    provider_keys = {}
-    missing = []
-    for provider in allowed:
-        value = os.environ.get(KEY_VARIABLES[provider], "").strip()
-        if value:
-            provider_keys[provider] = value
-        else:
-            missing.append(KEY_VARIABLES[provider])
-    if missing:
-        raise typer.BadParameter(f"set {', '.join(missing)} in the environment (the value is never printed)")
-
-    return provider_keys
+    try:
+        return read_keys(allowed)
+    except MissingKeys as exc:
+        raise typer.BadParameter(f"set {', '.join(exc.variables)} in the environment (the value is never printed)") from None
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--allow") from None
 
 
 def _confirm_send(component: str, record_count: int, providers: list[str], cap: float) -> bool:
@@ -312,6 +299,48 @@ def format_run_summary(report: Report) -> str:
     if dropped:
         lines.append(f"{dropped} {'model was' if dropped == 1 else 'models were'} not tested; the report says why.")
     return "\n".join(lines)
+
+
+@app.command("serve")
+def serve_command(
+    host: str = typer.Option("127.0.0.1", "--host", help="Address to listen on. Keep it on this machine."),
+    port: int = typer.Option(8000, "--port"),
+    data_dir: Path = typer.Option(
+        Path(".migration-eval-data"), "--data-dir", help="Where uploads, runs and reports are kept (owner-only)."
+    ),
+    catalog: Path = typer.Option(Path("catalog/catalog.yaml"), "--catalog", exists=True, dir_okay=False),
+    allow_remote: bool = typer.Option(False, "--allow-remote", help="Listen on a non-local address anyway."),
+) -> None:
+    """Start the local server and UI: upload an export, run an evaluation, read the report.
+
+    Provider API keys are read from the environment, never from the UI. The server has no login,
+    so it refuses any address but this machine's unless you pass --allow-remote.
+    """
+    import ipaddress
+
+    import uvicorn
+
+    from migration_eval.keys import key_status
+    from migration_eval.server.app import create_app
+
+    try:
+        is_local = host == "localhost" or ipaddress.ip_address(host).is_loopback
+    except ValueError:  # a name other than localhost, or not an address
+        is_local = False
+    if not is_local:
+        if not allow_remote:
+            typer.echo(f"Refusing to listen on {host!r}: the server has no login. Use --allow-remote to do it anyway.", err=True)
+            raise typer.Exit(code=1)
+        typer.echo(f"Warning: {host!r} is reachable from other machines and the server has no login.", err=True)
+
+    dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+    app_ = create_app(data_dir, catalog, frontend_dist=dist if dist.exists() else None)
+
+    configured = [name for name, ok in key_status().items() if ok]
+    typer.echo(f"Keys set for: {', '.join(configured) if configured else 'no provider (set OPENAI_API_KEY, ANTHROPIC_API_KEY or GEMINI_API_KEY)'}")
+    typer.echo(f"Data is kept in {data_dir.resolve()}")
+    typer.echo(f"Open http://{host}:{port}/?live=1" if dist.exists() else f"API at http://{host}:{port}/api/docs (build the frontend to get the UI: cd frontend && npm run build)")
+    uvicorn.run(app_, host=host, port=port, log_level="warning")
 
 
 def _reject(rejected: FileRejected) -> NoReturn:

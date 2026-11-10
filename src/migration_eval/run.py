@@ -460,6 +460,7 @@ async def run_evaluation(
     on_stage: Callable[[str], None] | None = None,
     should_cancel: Callable[[], bool] = lambda: False,
     now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+    meter: SpendMeter | None = None,
 ) -> Report:
     """Evaluate every candidate for one component and return the report.
 
@@ -469,9 +470,13 @@ async def run_evaluation(
     the same sample and the same incumbent runs. A stop request or the spending cap ends the run
     early and the report still gets written, with the unfinished candidates marked
     "insufficient data" (RUN-6).
+
+    Pass a `meter` to read the spend while the run is going (the server shows it); by default one
+    is made from `config.spending_cap_usd`.
     """
     announce = on_stage or (lambda stage: None)
-    meter = SpendMeter(config.spending_cap_usd)
+    if meter is None:
+        meter = SpendMeter(config.spending_cap_usd)
 
     announce("prepare")
     prepared = prepare(records, config)

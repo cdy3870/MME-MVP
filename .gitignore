@@ -3,3 +3,9 @@ node_modules/
 __pycache__/
 *.egg-info/
 .pytest_cache/
+# the server's uploads, runs and reports: partner data, never commit
+.migration-eval-data/
+# exports and recorded calls hold real prompts and responses: never commit
+*.tar.gz
+claude_records*.jsonl
+migration_eval_records.jsonl
