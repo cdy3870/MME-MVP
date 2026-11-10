@@ -303,5 +303,17 @@
         "predicted $2,310.00 a month, cap is $1,000.00"
       ]
     }
+  ],
+  "errors": [
+    {
+      "where": "baseline",
+      "message": "HTTP 429: rate_limit_error",
+      "count": 3
+    },
+    {
+      "where": "anthropic/claude-opus-5-5",
+      "message": "HTTP 529: overloaded_error",
+      "count": 2
+    }
   ]
 }

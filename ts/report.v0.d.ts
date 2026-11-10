@@ -30,6 +30,10 @@ export interface Report {
    * Catalog offerings that were never replayed, each with the reasons (CAT-5).
    */
   dropped_candidates: DroppedCandidate[];
+  /**
+   * The most common reasons calls failed, for the baseline and for each candidate, so a run where everything failed says why. Each message is the provider's error text cut to 200 characters; it never includes request headers or keys. An empty list when no call failed.
+   */
+  errors: CallFailure[];
 }
 /**
  * Which catalog the candidates came from, so a report can be reproduced (CAT-6).
@@ -183,4 +187,15 @@ export interface DroppedCandidate {
    * @minItems 1
    */
   reasons: [string, ...string[]];
+}
+export interface CallFailure {
+  /**
+   * "baseline" for the current model's replays, otherwise the candidate as provider/model.
+   */
+  where: string;
+  message: string;
+  /**
+   * How many calls failed with this message.
+   */
+  count: number;
 }

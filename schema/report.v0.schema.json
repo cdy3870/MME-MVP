@@ -15,7 +15,8 @@
     "noise_floor",
     "thresholds",
     "candidates",
-    "dropped_candidates"
+    "dropped_candidates",
+    "errors"
   ],
   "properties": {
     "schema_version": {
@@ -57,6 +58,13 @@
       "description": "Catalog offerings that were never replayed, each with the reasons (CAT-5).",
       "items": {
         "$ref": "#/$defs/DroppedCandidate"
+      }
+    },
+    "errors": {
+      "type": "array",
+      "description": "The most common reasons calls failed, for the baseline and for each candidate, so a run where everything failed says why. Each message is the provider's error text cut to 200 characters; it never includes request headers or keys. An empty list when no call failed.",
+      "items": {
+        "$ref": "#/$defs/CallFailure"
       }
     }
   },
@@ -501,6 +509,32 @@
             "type": "string",
             "minLength": 1
           }
+        }
+      }
+    },
+    "CallFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "where",
+        "message",
+        "count"
+      ],
+      "properties": {
+        "where": {
+          "type": "string",
+          "minLength": 1,
+          "description": "\"baseline\" for the current model's replays, otherwise the candidate as provider/model."
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How many calls failed with this message."
         }
       }
     }

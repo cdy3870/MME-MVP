@@ -304,6 +304,10 @@ def format_run_summary(report: Report) -> str:
         )
         lines.append(f"    {c.explanation}")
 
+    if report.errors:
+        lines.append("Calls failed:")
+        lines.extend(f"  {e.where}: {e.count} x {e.message}" for e in report.errors)
+
     dropped = len(report.dropped_candidates)
     if dropped:
         lines.append(f"{dropped} {'model was' if dropped == 1 else 'models were'} not tested; the report says why.")

@@ -211,6 +211,23 @@ class DroppedCandidate(BaseModel):
     reasons: Annotated[list[Reason], Field(min_length=1)]
 
 
+class CallFailure(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    where: Annotated[
+        str,
+        Field(
+            description='"baseline" for the current model\'s replays, otherwise the candidate as provider/model.',
+            min_length=1,
+        ),
+    ]
+    message: Annotated[str, Field(max_length=240, min_length=1)]
+    count: Annotated[
+        int, Field(description='How many calls failed with this message.', ge=1)
+    ]
+
+
 class Report(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -239,5 +256,11 @@ class Report(BaseModel):
         list[DroppedCandidate],
         Field(
             description='Catalog offerings that were never replayed, each with the reasons (CAT-5).'
+        ),
+    ]
+    errors: Annotated[
+        list[CallFailure],
+        Field(
+            description="The most common reasons calls failed, for the baseline and for each candidate, so a run where everything failed says why. Each message is the provider's error text cut to 200 characters; it never includes request headers or keys. An empty list when no call failed."
         ),
     ]
