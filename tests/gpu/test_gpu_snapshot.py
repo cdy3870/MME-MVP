@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from migration_eval.gpu.nvidia_smi import NvidiaSmiError
 from migration_eval.gpu.snapshot import parse_query_xml, parse_topo, take_snapshot
-
-pytestmark = pytest.mark.xfail(raises=NotImplementedError, strict=True, reason="GPU-1 skeleton")
 
 # Trimmed `nvidia-smi -q -x`: only the elements the parser reads.
 QUERY_XML = """<?xml version="1.0" ?>
@@ -75,6 +74,21 @@ def test_parse_topo_rejects_unknown_layout():
         parse_topo("something else entirely\n")
 
 
+def test_parse_topo_strips_escape_codes_and_keeps_nic_columns():
+    topo = (
+        "\t\x1b[4mGPU0\tGPU1\tNIC0\tCPU Affinity\tNUMA Affinity\x1b[0m\n"
+        "GPU0\t X \tSYS\tPIX\t0-31\t0\n"
+        "GPU1\tSYS\t X \tSYS\t32-63\t1\n"
+        "NIC0\tPIX\tSYS\t X \n"
+        "\n"
+        "Legend:\n"
+    )
+    parsed = parse_topo(topo)
+    assert set(parsed.links) == {"GPU0", "GPU1"}
+    assert parsed.links["GPU0"] == {"GPU1": "SYS", "NIC0": "PIX"}
+    assert parsed.cpu_affinity == {"GPU0": "0-31", "GPU1": "32-63"}
+
+
 def test_take_snapshot_keeps_raw_text_when_topo_unparseable():
     def run(args):
         return QUERY_XML if list(args) == ["-q", "-x"] else "garbled"
@@ -82,3 +96,18 @@ def test_take_snapshot_keeps_raw_text_when_topo_unparseable():
     snap = take_snapshot(run)
     assert snap.topology is None
     assert snap.raw_topo == "garbled"
+
+
+def test_take_snapshot_survives_topo_command_failing():
+    def run(args):
+        if list(args) == ["topo", "-m"]:
+            raise NvidiaSmiError("topo not supported")
+        return QUERY_XML
+
+    snap = take_snapshot(run)
+    assert snap.topology is None and len(snap.gpus) == 2
+
+
+def test_take_snapshot_fails_on_bad_xml():
+    with pytest.raises(NvidiaSmiError, match="-q -x"):
+        take_snapshot(lambda args: "not xml")
