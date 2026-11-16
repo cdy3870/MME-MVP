@@ -1,0 +1,310 @@
+{
+  "schema_version": "v0",
+  "generated_at": "2026-11-02T15:04:05Z",
+  "component": "support-bot",
+  "catalog": {
+    "sha256": "9b1f6c0e4a7d2358e1c4b7a90d3f5e6218a4c7b0d9e2f13456a8b7c0d1e2f3a4",
+    "as_of": "2026-10-24"
+  },
+  "incumbent": {
+    "provider": "openai",
+    "model": "gpt-4o",
+    "latency": {
+      "p50_ms": 820.0,
+      "p95_ms": 2100.0,
+      "n": 447,
+      "failed": 3
+    },
+    "cost_per_request_usd": 0.0075
+  },
+  "sample": {
+    "records_available": 1840,
+    "requests_replayed": 150,
+    "replay_speed": 1.0,
+    "seed": 1
+  },
+  "noise_floor": {
+    "value": 0.92,
+    "runs": 3,
+    "requests": 150
+  },
+  "thresholds": {
+    "min_requests": 50,
+    "safe_margin": 0.0,
+    "caveat_margin": 0.05,
+    "min_category_requests": 10
+  },
+  "candidates": [
+    {
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "verdict": "safe_to_swap",
+      "explanation": "Agreement 97.3% (95% CI 94.7% to 99.3%) over 150 requests; the lower bound is at or above the noise floor of 92.0%.",
+      "stopped_early": false,
+      "requests_run": 150,
+      "agreement": {
+        "agreed": 146,
+        "n": 150,
+        "rate": 0.9733333333333334,
+        "ci_low": 0.9466666666666667,
+        "ci_high": 0.9933333333333333
+      },
+      "by_category": [
+        {
+          "category": "chat",
+          "agreement": {
+            "agreed": 97,
+            "n": 100,
+            "rate": 0.97,
+            "ci_low": 0.93,
+            "ci_high": 1.0
+          }
+        },
+        {
+          "category": "tools",
+          "agreement": {
+            "agreed": 49,
+            "n": 50,
+            "rate": 0.98,
+            "ci_low": 0.94,
+            "ci_high": 1.0
+          }
+        }
+      ],
+      "latency": {
+        "p50_ms": 410.0,
+        "p95_ms": 980.0,
+        "n": 150,
+        "failed": 0
+      },
+      "cost": {
+        "total_usd": 0.06,
+        "per_request_usd": 0.0004
+      },
+      "conversion": {
+        "requests": 150,
+        "converted_requests": 0,
+        "unconverted": []
+      },
+      "check_failures": [],
+      "sample_outputs": [
+        "Your order shipped."
+      ]
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-sonnet-5-5",
+      "verdict": "swap_with_caveats",
+      "explanation": "Agreement 94.0% (95% CI 90.0% to 97.3%) over 150 requests, against a noise floor of 92.0%. Caveats: the overall lower bound 90.0% is below the noise floor 92.0%; it used converted requests, so the score reflects the conversion as well as the model.",
+      "stopped_early": false,
+      "requests_run": 150,
+      "agreement": {
+        "agreed": 141,
+        "n": 150,
+        "rate": 0.94,
+        "ci_low": 0.9,
+        "ci_high": 0.9733333333333334
+      },
+      "by_category": [
+        {
+          "category": "chat",
+          "agreement": {
+            "agreed": 97,
+            "n": 100,
+            "rate": 0.97,
+            "ci_low": 0.93,
+            "ci_high": 1.0
+          }
+        },
+        {
+          "category": "tools",
+          "agreement": {
+            "agreed": 44,
+            "n": 50,
+            "rate": 0.88,
+            "ci_low": 0.78,
+            "ci_high": 0.96
+          }
+        }
+      ],
+      "latency": {
+        "p50_ms": 910.0,
+        "p95_ms": 2450.0,
+        "n": 150,
+        "failed": 0
+      },
+      "cost": {
+        "total_usd": 0.915,
+        "per_request_usd": 0.0061
+      },
+      "conversion": {
+        "requests": 150,
+        "converted_requests": 150,
+        "unconverted": [
+          {
+            "field": "parameters.seed: Anthropic has no seed",
+            "requests": 38
+          },
+          {
+            "field": "parameters.response_format: Anthropic Messages has no response_format",
+            "requests": 21
+          }
+        ]
+      },
+      "check_failures": [
+        {
+          "check": "tool_calls",
+          "requests": 4
+        }
+      ]
+    },
+    {
+      "provider": "gemini",
+      "model": "gemini-2.0-flash",
+      "verdict": "do_not_swap",
+      "explanation": "Stopped after 50 requests: even its best plausible agreement was below the incumbent's own agreement with itself (92.0%).",
+      "stopped_early": true,
+      "requests_run": 50,
+      "agreement": {
+        "agreed": 30,
+        "n": 50,
+        "rate": 0.6,
+        "ci_low": 0.46,
+        "ci_high": 0.74
+      },
+      "by_category": [
+        {
+          "category": "chat",
+          "agreement": {
+            "agreed": 20,
+            "n": 30,
+            "rate": 0.6666666666666666,
+            "ci_low": 0.5,
+            "ci_high": 0.8333333333333334
+          }
+        },
+        {
+          "category": "tools",
+          "agreement": {
+            "agreed": 10,
+            "n": 20,
+            "rate": 0.5,
+            "ci_low": 0.3,
+            "ci_high": 0.7
+          }
+        }
+      ],
+      "latency": {
+        "p50_ms": 380.0,
+        "p95_ms": 1100.0,
+        "n": 50,
+        "failed": 0
+      },
+      "cost": {
+        "total_usd": 0.01,
+        "per_request_usd": 0.0002
+      },
+      "conversion": {
+        "requests": 50,
+        "converted_requests": 50,
+        "unconverted": [
+          {
+            "field": "parameters.extra.logit_bias: provider-specific setting, not sent to another provider",
+            "requests": 12
+          }
+        ]
+      },
+      "check_failures": [
+        {
+          "check": "output_schema",
+          "requests": 9
+        },
+        {
+          "check": "tool_calls",
+          "requests": 6
+        }
+      ]
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-opus-5-5",
+      "verdict": "insufficient_data",
+      "explanation": "Only 30 requests ran and at least 50 are needed.",
+      "stopped_early": false,
+      "requests_run": 30,
+      "agreement": {
+        "agreed": 28,
+        "n": 30,
+        "rate": 0.9333333333333333,
+        "ci_low": 0.8333333333333334,
+        "ci_high": 1.0
+      },
+      "by_category": [
+        {
+          "category": "chat",
+          "agreement": {
+            "agreed": 20,
+            "n": 20,
+            "rate": 1.0,
+            "ci_low": 1.0,
+            "ci_high": 1.0
+          }
+        },
+        {
+          "category": "tools",
+          "agreement": {
+            "agreed": 8,
+            "n": 10,
+            "rate": 0.8,
+            "ci_low": 0.5,
+            "ci_high": 1.0
+          }
+        }
+      ],
+      "latency": {
+        "p50_ms": 1500.0,
+        "p95_ms": 3900.0,
+        "n": 28,
+        "failed": 2
+      },
+      "cost": {
+        "total_usd": 0.375,
+        "per_request_usd": 0.0125
+      },
+      "conversion": {
+        "requests": 30,
+        "converted_requests": 30,
+        "unconverted": [
+          {
+            "field": "parameters.seed: Anthropic has no seed",
+            "requests": 7
+          }
+        ]
+      },
+      "check_failures": [
+        {
+          "check": "error",
+          "requests": 2
+        }
+      ]
+    }
+  ],
+  "dropped_candidates": [
+    {
+      "provider": "mistral",
+      "model": "mistral-large",
+      "stage": 1,
+      "reasons": [
+        "provider 'mistral' is not on the allow-list"
+      ]
+    },
+    {
+      "provider": "openai",
+      "model": "o3",
+      "stage": 2,
+      "reasons": [
+        "predicted $2,310.00 a month, cap is $1,000.00"
+      ]
+    }
+  ]
+}

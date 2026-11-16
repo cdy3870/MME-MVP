@@ -59,7 +59,7 @@ def not_installed(argv):
 def install(monkeypatch, runner=fake_nvidia_smi):
     monkeypatch.setattr(cli, "find_nvidia_smi", lambda: "nvidia-smi")
     monkeypatch.setattr(cli, "make_runner", lambda binary: runner)
-    monkeypatch.setattr(cli, "run_command", not_installed)
+    monkeypatch.setattr(cli, "run_system_command", not_installed)
     monkeypatch.setattr(cli, "CpuSampler", FakeCpuSampler)
 
 

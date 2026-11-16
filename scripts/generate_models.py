@@ -24,7 +24,12 @@ MODELS = ROOT / "src" / "migration_eval" / "models"
 JSON2TS = ROOT / "node_modules" / ".bin" / "json2ts"
 
 RECORD_SCHEMA = ROOT / "schema" / "record.v0.schema.json"
-TS_OUT = ROOT / "ts" / "record.v0.d.ts"
+REPORT_SCHEMA = ROOT / "schema" / "report.v0.schema.json"
+# Schema -> TypeScript declaration file, for the frontend.
+TS_TARGETS = (
+    (RECORD_SCHEMA, ROOT / "ts" / "record.v0.d.ts"),
+    (REPORT_SCHEMA, ROOT / "ts" / "report.v0.d.ts"),
+)
 
 
 @dataclass(frozen=True)
@@ -38,6 +43,7 @@ class PythonTarget:
 
 PYTHON_TARGETS = (
     PythonTarget(RECORD_SCHEMA, MODELS / "record.py"),
+    PythonTarget(REPORT_SCHEMA, MODELS / "report.py"),
     # Type aliases make constrained strings (like Region) plain `str` values instead of
     # wrapper objects, so `"us" in offering.regions` works.
     PythonTarget(
@@ -92,12 +98,12 @@ def generate_python(target: PythonTarget, out: Path) -> None:
     )
 
 
-def generate_typescript(out: Path) -> None:
+def generate_typescript(schema: Path, out: Path) -> None:
     if not JSON2TS.exists():
         sys.exit(f"{JSON2TS} not found. Run `npm ci` first.")
     out.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(
-        [str(JSON2TS), "--input", str(RECORD_SCHEMA), "--output", str(out)],
+        [str(JSON2TS), "--input", str(schema), "--output", str(out)],
         check=True,
         cwd=ROOT,
     )
@@ -108,7 +114,7 @@ def outputs() -> list[tuple[Path, Callable[[Path], None]]]:
     jobs: list[tuple[Path, Callable[[Path], None]]] = [
         (t.out, lambda path, t=t: generate_python(t, path)) for t in PYTHON_TARGETS
     ]
-    jobs.append((TS_OUT, generate_typescript))
+    jobs.extend((out, lambda path, schema=schema: generate_typescript(schema, path)) for schema, out in TS_TARGETS)
     return jobs
 
 
