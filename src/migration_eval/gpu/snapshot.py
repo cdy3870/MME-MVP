@@ -3,7 +3,7 @@
 Two commands:
 
     nvidia-smi -q -x     XML. GPU model and count, memory total, driver and CUDA version,
-                         PCIe generation and width, power limit, max clocks.
+                         PCIe generation and width, power limit (current and max), max clocks, persistence mode.
     nvidia-smi topo -m   The GPU-to-GPU link matrix (NV#, PIX, PXB, PHB, NODE, SYS) plus
                          CPU affinity and NUMA affinity columns.
 
@@ -35,10 +35,14 @@ class GpuInfo(BaseModel):
     pci_bus_id: str
     memory_total_mib: int
     power_limit_w: float | None = None
+    max_power_limit_w: float | None = None  # the most the limit can be raised to (`nvidia-smi -pl`)
     max_sm_clock_mhz: int | None = None
     max_mem_clock_mhz: int | None = None
     pcie_gen_max: int | None = None
     pcie_width_max: int | None = None
+    # Persistence mode keeps the driver loaded with no GPU process running, so a new process
+    # doesn't pay driver start-up. None when not reported ("N/A" on Windows, which has no such mode).
+    persistence_mode: bool | None = None
 
 
 class Topology(BaseModel):
@@ -76,6 +80,7 @@ POWER_LIMIT_PATHS = (
     "power_readings/current_power_limit",
     "power_readings/power_limit",
 )
+MAX_POWER_LIMIT_PATHS = ("gpu_power_readings/max_power_limit", "power_readings/max_power_limit")
 
 
 def _text(element: ET.Element, *paths: str) -> str | None:
@@ -104,6 +109,12 @@ def _number(element: ET.Element, *paths: str) -> float | None:
 def _int(element: ET.Element, *paths: str) -> int | None:
     value = _number(element, *paths)
     return None if value is None else int(value)
+
+
+def _enabled(element: ET.Element, *paths: str) -> bool | None:
+    """"Enabled" -> True, "Disabled" -> False, anything else (missing, "N/A") -> None."""
+    value = (_text(element, *paths) or "").lower()
+    return {"enabled": True, "disabled": False}.get(value)
 
 
 def parse_query_xml(xml_text: str) -> tuple[str, str | None, list[GpuInfo]]:
@@ -141,10 +152,12 @@ def parse_query_xml(xml_text: str) -> tuple[str, str | None, list[GpuInfo]]:
                 pci_bus_id=gpu.get("id") or _text(gpu, "pci/pci_bus_id") or "unknown",
                 memory_total_mib=memory_total,
                 power_limit_w=_number(gpu, *POWER_LIMIT_PATHS),
+                max_power_limit_w=_number(gpu, *MAX_POWER_LIMIT_PATHS),
                 max_sm_clock_mhz=_int(gpu, "max_clocks/sm_clock"),
                 max_mem_clock_mhz=_int(gpu, "max_clocks/mem_clock"),
                 pcie_gen_max=_int(gpu, f"{link}/pcie_gen/max_link_gen"),
                 pcie_width_max=_int(gpu, f"{link}/link_widths/max_link_width"),
+                persistence_mode=_enabled(gpu, "persistence_mode"),
             )
         )
     if not gpus:
