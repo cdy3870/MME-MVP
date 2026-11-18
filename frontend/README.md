@@ -41,3 +41,11 @@ from the screens; `.migration-eval-data/` is git-ignored because it holds your l
 
 Replay speed: 1x replays at the logged pace, so logs spread over days take days. The configure screen
 suggests a speed that fits a pass into about ten minutes; latency is only comparable at 1x.
+
+## GPU report
+
+In live mode, "GPU report" takes the `gpu_profile.json` written by `migration-eval gpu capture` (or
+`gpu import`). The server builds the report on upload: what was measured, ranked configuration changes
+with their estimated gains, cost estimates (when `catalog/gpu_prices.yaml` has prices), and an ordered
+checklist. Every number is tagged Measured or Estimate. `?live=1&gpu=<id>` links straight to a report.
+The same report is available on the command line as JSON with `migration-eval gpu report <profile>`.

@@ -4,6 +4,7 @@
 
 import type { Report } from "../../../ts/report.v0";
 import type { ProviderStatus, RunRequest, RunStatus, RunSummary, UploadInfo } from "./api-types";
+import type { GpuReport, GpuReportInfo } from "./gpu-types";
 
 /** A failed request. `message` is the server's `detail`, already worded for the user. */
 export class ApiError extends Error {
@@ -85,3 +86,23 @@ export const getReport = (id: string): Promise<Report> => request(`/api/runs/${i
 
 /** DELETE /api/runs/{id}: removes the run and its report from the server. */
 export const deleteRun = (id: string): Promise<void> => request(`/api/runs/${id}`, { method: "DELETE" });
+
+/**
+ * POST /api/gpu/reports with gpu_profile.json as multipart form data; the server builds and stores the
+ * GPU report. `uploadId` (an export already uploaded) lets the costs use its token counts.
+ */
+export function uploadGpuProfile(file: File, uploadId?: string): Promise<GpuReportInfo> {
+  const form = new FormData();
+  form.append("file", file);
+  if (uploadId) form.append("upload_id", uploadId);
+  return request("/api/gpu/reports", { method: "POST", body: form });
+}
+
+/** GET /api/gpu/reports: stored GPU reports, newest first. */
+export const listGpuReports = (): Promise<GpuReportInfo[]> => request("/api/gpu/reports");
+
+/** GET /api/gpu/reports/{id}. */
+export const getGpuReport = (id: string): Promise<GpuReport> => request(`/api/gpu/reports/${id}`);
+
+/** DELETE /api/gpu/reports/{id}. */
+export const deleteGpuReport = (id: string): Promise<void> => request(`/api/gpu/reports/${id}`, { method: "DELETE" });
