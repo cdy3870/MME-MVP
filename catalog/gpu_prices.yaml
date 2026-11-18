@@ -1,0 +1,24 @@
+# GPU hourly prices for the GPU report's cost estimates (GPU-10, used by GPU-7).
+#
+# Hand-maintained and reviewed in pull requests. EMPTY until someone checks real prices:
+# do not commit guessed figures.
+#
+# For each GPU:
+#   gpu              display name
+#   match            substrings that must all appear in the nvidia-smi name (case-insensitive)
+#   hourly_usd_low   USD per GPU per hour, low end (e.g. reserved / cheapest provider)
+#   hourly_usd_high  USD per GPU per hour, high end (e.g. on-demand / most expensive provider)
+#   memory_gib       GPU memory
+#   as_of            YYYY-MM-DD, the day you checked the figures
+#   source_url       where the figures came from
+#
+# Example shape (not real prices):
+#   - gpu: H100 80GB
+#     match: ["H100", "80GB"]
+#     hourly_usd_low: 0.0
+#     hourly_usd_high: 0.0
+#     memory_gib: 80
+#     as_of: "2026-11-17"
+#     source_url: https://example.com/pricing
+
+prices: []
