@@ -104,6 +104,15 @@ def v0(provider: str, body: dict[str, Any] | None = None) -> ModelRequest:
     return ModelRequest.model_validate(parsed.request)
 
 
+def exact_body(provider: str) -> dict[str, Any]:
+    """The provider's example body as it can be rebuilt exactly: Anthropic's API rejects sampling
+    parameters, so a logged Anthropic request that sets them is not rebuilt exactly any more."""
+    body, _ = BODIES[provider]
+    if provider == "anthropic":
+        body = {k: v for k, v in body.items() if k not in ("temperature", "top_p", "top_k")}
+    return body
+
+
 def parse_back(built) -> dict[str, Any]:
     parsed = PROVIDERS[built.provider].parse_request(built.body, endpoint(built.provider, built.model))
     return ModelRequest.model_validate(parsed.request).model_dump(mode="json", by_alias=True, exclude_none=True)
@@ -132,7 +141,7 @@ def paths(built) -> set[str]:
 
 @pytest.mark.parametrize("provider", ["openai", "anthropic", "gemini"])
 def test_a_same_provider_request_round_trips_exactly(provider):
-    original = v0(provider)
+    original = v0(provider, exact_body(provider))
     built = build_request(provider, provider, "swapped-model", original)
     assert round_trips(built, original)
     assert built.converted is False and built.unconverted == []
@@ -296,7 +305,10 @@ def test_a_gemini_call_without_an_id_gets_its_name_as_the_id_elsewhere():
 
 def test_openai_to_anthropic_lists_what_anthropic_cannot_carry():
     built = build_request("openai", "anthropic", "m", v0("openai"))
-    assert paths(built) == {"parameters.seed", "parameters.response_format", "parameters.extra.logit_bias"}
+    assert paths(built) == {
+        "parameters.seed", "parameters.response_format", "parameters.extra.logit_bias",
+        "parameters.temperature", "parameters.top_p",
+    }  # fmt: skip
 
 
 def test_anthropic_to_openai_lists_top_k_and_provider_settings():
@@ -400,7 +412,7 @@ def call(handler, provider="anthropic", source="anthropic", request=None, keys=K
 
 @pytest.mark.parametrize("provider", ["openai", "anthropic", "gemini"])
 def test_a_successful_call_is_sent_to_the_right_place_and_parsed(provider):
-    result, seen = call(lambda req: httpx.Response(200, json=REPLIES[provider]), provider=provider, source=provider)
+    result, seen = call(lambda req: httpx.Response(200, json=REPLIES[provider]), provider=provider, source=provider, request=v0(provider, exact_body(provider)))
     assert isinstance(result, ReplayResult) and result.error is None
     assert (result.text, result.input_tokens, result.output_tokens) == ("hi", 10, 5)
     assert result.latency_ms is not None and result.latency_ms >= 0

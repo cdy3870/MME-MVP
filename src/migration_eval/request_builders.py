@@ -30,6 +30,10 @@ Open decisions (see the notes on EVL-10):
     * Anthropic and Gemini have no `seed`, and Anthropic Messages has no `response_format`;
       those are listed as unconverted, which can make EVL-4's schema check fail for a reason
       that is not the model's
+    * the Anthropic API rejects `temperature`, `top_p` and `top_k`, so replays to Anthropic run
+      at the model's own sampling, not the logged one: the incumbent's baseline and the
+      candidates are all replayed that way, so they stay comparable with each other, but not with
+      the logged outputs. Whether OpenAI and Gemini need the same treatment is unchecked.
     * JSON Schema keywords that Gemini's `parameters` subset rejects are not checked
 """
 
@@ -48,6 +52,9 @@ from migration_eval.models.record import ModelRequest
 from migration_eval.replay import CompleteFn, RateLimited, ReplayResult, error_result
 
 DEFAULT_ANTHROPIC_MAX_TOKENS = 4096  # Anthropic requires max_tokens; used when the log has none
+# The Claude API returns a 400 for any request that sets these (on the 5.5 models for non-default
+# values, and on every model since 2026-10-21), so the Anthropic builder never sends them.
+SAMPLING_PARAMETERS = ("temperature", "top_p", "top_k")
 ANTHROPIC_VERSION = "2023-06-01"
 
 # generationConfig keys (beyond the ones v0 maps) that belong inside generationConfig.
@@ -208,7 +215,7 @@ def build_openai_chat(model: str, request: ModelRequest, *, exact: bool) -> Buil
         body["stream"] = True
 
     _add_extra(body, params.get("extra"), exact, lost)
-    return BuiltRequest("openai", model, body, converted=not exact, unconverted=lost)
+    return BuiltRequest("openai", model, body, converted=not exact or bool(lost), unconverted=lost)
 
 
 # --- Anthropic Messages ------------------------------------------------------------------
@@ -238,6 +245,10 @@ def build_anthropic_messages(model: str, request: ModelRequest, *, exact: bool) 
 
     System messages go in the top-level `system`, and Anthropic requires `max_tokens`: when the
     v0 request has none, say so in `unconverted` and pick a default rather than failing.
+
+    `temperature`, `top_p` and `top_k` are never sent (see `SAMPLING_PARAMETERS`): they are listed
+    in `unconverted`, and the request counts as converted even for the same provider, because it
+    is no longer exactly what was logged.
     """
     r = _v0(request)
     lost: list[UnconvertedField] = []
@@ -278,9 +289,11 @@ def build_anthropic_messages(model: str, request: ModelRequest, *, exact: bool) 
     else:
         body["max_tokens"] = DEFAULT_ANTHROPIC_MAX_TOKENS
         _lost(lost, "parameters.max_output_tokens", f"Anthropic requires max_tokens; used {DEFAULT_ANTHROPIC_MAX_TOKENS}")
-    for source, target in (("temperature", "temperature"), ("top_p", "top_p"), ("top_k", "top_k"), ("stop", "stop_sequences")):
-        if source in params:
-            body[target] = params[source]
+    if "stop" in params:
+        body["stop_sequences"] = params["stop"]
+    for name in SAMPLING_PARAMETERS:  # the API rejects these with a 400, so they are left out and listed
+        if name in params:
+            _lost(lost, f"parameters.{name}", "the Anthropic API rejects sampling parameters, so it was not sent")
     if "seed" in params:
         _lost(lost, "parameters.seed", "Anthropic has no seed")
     if params.get("response_format", {}).get("type", "text") != "text":
@@ -306,7 +319,7 @@ def build_anthropic_messages(model: str, request: ModelRequest, *, exact: bool) 
         body["stream"] = True
 
     _add_extra(body, params.get("extra"), exact, lost)
-    return BuiltRequest("anthropic", model, body, converted=not exact, unconverted=lost)
+    return BuiltRequest("anthropic", model, body, converted=not exact or bool(lost), unconverted=lost)
 
 
 # --- Gemini generateContent --------------------------------------------------------------
@@ -411,7 +424,7 @@ def build_gemini_generate(model: str, request: ModelRequest, *, exact: bool) -> 
         (generation if key in _GEMINI_GENERATION_EXTRA else body)[key] = value
     if generation:
         body["generationConfig"] = generation
-    return BuiltRequest("gemini", model, body, converted=not exact, unconverted=lost)
+    return BuiltRequest("gemini", model, body, converted=not exact or bool(lost), unconverted=lost)
 
 
 # --- choosing, proving and sending -------------------------------------------------------

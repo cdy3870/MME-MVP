@@ -73,6 +73,7 @@ Tier = Literal["smoke", "full"]
 
 TIER_SAMPLE_SIZE: dict[Tier, int] = {"smoke": 50, "full": 200}  # placeholders, see the open decisions
 MAX_BASELINE_FAILURE_RATE = 0.5  # above this share of failed incumbent calls there is no usable noise floor
+ERRORS_SHOWN_PER_MODEL = 3  # how many distinct error messages the report keeps for each model
 
 # Given the provider the traffic was logged from, return the function that calls models.
 # (`request_builders.make_complete` is the real one; tests pass a fake.)
@@ -393,6 +394,12 @@ def _candidate_entry(
     }
 
 
+def _failures(where: str, results: list[ReplayResult]) -> list[dict[str, Any]]:
+    """The most common error messages among `results`, so a run where calls failed says why."""
+    counts = Counter(r.error for r in results if r.error is not None)
+    return [{"where": where, "message": message, "count": n} for message, n in counts.most_common(ERRORS_SHOWN_PER_MODEL)]
+
+
 def build_report(
     config: RunConfig,
     prepared: Prepared,
@@ -411,6 +418,10 @@ def build_report(
     """
     thresholds = Thresholds()
     provenance = catalog_provenance(catalog_path)
+
+    errors = _failures("baseline", [result for run in baseline.runs for result in run])
+    for evaluation in evaluations:
+        errors += _failures(f"{evaluation.offering.provider}/{evaluation.offering.model}", evaluation.run.results)
 
     return Report.model_validate(
         {
@@ -434,6 +445,7 @@ def build_report(
             "thresholds": asdict(thresholds),
             "candidates": [_candidate_entry(e, prepared, baseline, thresholds) for e in evaluations],
             "dropped_candidates": dropped,
+            "errors": errors,
         }
     )
 
@@ -448,6 +460,7 @@ async def run_evaluation(
     on_stage: Callable[[str], None] | None = None,
     should_cancel: Callable[[], bool] = lambda: False,
     now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+    meter: SpendMeter | None = None,
 ) -> Report:
     """Evaluate every candidate for one component and return the report.
 
@@ -457,9 +470,13 @@ async def run_evaluation(
     the same sample and the same incumbent runs. A stop request or the spending cap ends the run
     early and the report still gets written, with the unfinished candidates marked
     "insufficient data" (RUN-6).
+
+    Pass a `meter` to read the spend while the run is going (the server shows it); by default one
+    is made from `config.spending_cap_usd`.
     """
     announce = on_stage or (lambda stage: None)
-    meter = SpendMeter(config.spending_cap_usd)
+    if meter is None:
+        meter = SpendMeter(config.spending_cap_usd)
 
     announce("prepare")
     prepared = prepare(records, config)
