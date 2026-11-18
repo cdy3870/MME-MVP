@@ -82,3 +82,17 @@ class RunSummary(ApiModel):
     state: RunState
     started_at: datetime
     verdicts: dict[str, int] | None = None  # e.g. {"safe_to_swap": 1, "do_not_swap": 2}, once done
+
+
+class GpuReportInfo(ApiModel):
+    """One stored GPU report (GPU-5 to GPU-9), built from an uploaded gpu_profile.json."""
+
+    id: str
+    filename: str  # shown to the user only; never used as a path
+    hostname: str
+    created_at: datetime
+    gpu_count: int
+    gpu_names: list[str]  # distinct models, e.g. ["NVIDIA H100 80GB HBM3"]
+    recommendations: int
+    has_costs: bool
+    upload_id: str | None = None  # the export whose token counts priced cost per million tokens, if one was picked

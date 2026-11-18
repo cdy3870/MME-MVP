@@ -4,6 +4,8 @@
     <data_dir>/uploads/<id>/info.json           an `UploadInfo`
     <data_dir>/runs/<id>/state.json             a `RunStatus`
     <data_dir>/runs/<id>/report.json            the finished `Report`
+    <data_dir>/gpu/<id>/report.json             a `GpuReport` (GPU-5 to GPU-9)
+    <data_dir>/gpu/<id>/info.json               its `GpuReportInfo`
 
 Ids are random (`uuid4().hex`) and are the only thing ever used to build a path: `_checked_id`
 rejects anything else, so a request cannot reach outside the data directory. The directory and
@@ -23,13 +25,15 @@ import re
 import shutil
 import tempfile
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from migration_eval.archive import component_summaries
 from migration_eval.capture.sink import record_to_json
+from migration_eval.gpu.report import GpuReport
 from migration_eval.models import CallRecord, Report
 from migration_eval.run import write_report
-from migration_eval.server.models import ComponentInfo, RunStatus, UploadInfo
+from migration_eval.server.models import ComponentInfo, GpuReportInfo, RunStatus, UploadInfo
 
 _ID = re.compile(r"[0-9a-f]{32}")
 MAX_FILENAME_SHOWN = 200
@@ -76,6 +80,7 @@ class Store:
         self.root = _private_dir(Path(data_dir))
         self._uploads = _private_dir(self.root / "uploads")
         self._runs = _private_dir(self.root / "runs")
+        self._gpu = _private_dir(self.root / "gpu")
 
     def _folder(self, base: Path, item_id: str) -> Path:
         folder = base / _checked_id(item_id)
@@ -173,3 +178,45 @@ class Store:
     def delete_run(self, run_id: str) -> None:
         """Remove the run's folder, its report included. Raise `NotFound`."""
         shutil.rmtree(self._folder(self._runs, run_id))
+
+    # GPU reports
+    def save_gpu_report(self, filename: str, report: GpuReport, upload_id: str | None = None) -> GpuReportInfo:
+        """Give the report a new id, write it and its `GpuReportInfo`, and return the info."""
+        report_id = uuid.uuid4().hex
+        folder = _private_dir(self._gpu / report_id)
+        info = GpuReportInfo(
+            id=report_id,
+            filename=_display_name(filename),
+            hostname=report.hostname,
+            created_at=datetime.now(timezone.utc),
+            gpu_count=report.assessment.gpu_count,
+            gpu_names=sorted({u.name for u in report.assessment.usage}),
+            recommendations=len(report.recommendations),
+            has_costs=report.costs is not None,
+            upload_id=upload_id,
+        )
+        _write_private(folder / "report.json", report.model_dump_json().encode("utf-8"))
+        _write_private(folder / "info.json", info.model_dump_json().encode("utf-8"))  # last: its presence means "complete"
+        return info
+
+    def get_gpu_report(self, report_id: str) -> GpuReport:
+        """Raise `NotFound`."""
+        folder = self._folder(self._gpu, report_id)
+        try:
+            return GpuReport.model_validate_json((folder / "report.json").read_bytes())
+        except OSError:
+            raise NotFound(report_id) from None
+
+    def list_gpu_reports(self) -> list[GpuReportInfo]:
+        """Every GPU report, newest first. A folder without a readable info.json is skipped."""
+        infos: list[GpuReportInfo] = []
+        for folder in self._gpu.iterdir():
+            try:
+                infos.append(GpuReportInfo.model_validate_json((folder / "info.json").read_bytes()))
+            except (OSError, ValueError):
+                continue
+        return sorted(infos, key=lambda i: i.created_at, reverse=True)
+
+    def delete_gpu_report(self, report_id: str) -> None:
+        """Remove the report's folder. Raise `NotFound`."""
+        shutil.rmtree(self._folder(self._gpu, report_id))

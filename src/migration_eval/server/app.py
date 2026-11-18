@@ -11,6 +11,14 @@ their errors into HTTP answers.
     POST   /api/runs/{id}/cancel     -> `RunStatus`
     GET    /api/runs/{id}/report     -> the `Report` JSON (404 until done)
     DELETE /api/runs/{id}
+    POST   /api/gpu/reports          multipart gpu_profile.json (+ optional upload_id) -> `GpuReportInfo` (201)
+    GET    /api/gpu/reports          -> list of `GpuReportInfo`
+    GET    /api/gpu/reports/{id}     -> the `GpuReport` JSON
+    DELETE /api/gpu/reports/{id}
+
+A GPU report is built when its profile is uploaded (GPU-5 to GPU-9): assessment, recommendations,
+checklist, and costs when `gpu_prices.yaml` sits next to the catalog. Picking an export
+(`upload_id`) lets the costs use its token counts for cost per million tokens.
 
 Errors: `FileRejected`, `MissingKeys` and `RequestRejected` become `{"detail": "<message>"}` with the
 right status (400, 400, `.status_code`); `NotFound` is 404. An unexpected exception is a plain
@@ -30,23 +38,46 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, File, Request, Response, UploadFile
+from fastapi import FastAPI, File, Form, Request, Response, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from migration_eval.archive import MAX_ARCHIVE_BYTES, read_archive
 from migration_eval.capture.file_checks import FileRejected
+from migration_eval.gpu.prices import PriceTable, load_prices
+from migration_eval.gpu.profile import parse_profile
+from migration_eval.gpu.report import GpuReport, build_gpu_report
 from migration_eval.keys import MissingKeys
 from migration_eval.models import Report
 from migration_eval.server.jobs import FactoryBuilder, RequestRejected, RunManager, real_factory_builder
-from migration_eval.server.models import ProviderStatus, RunRequest, RunStatus, RunSummary, UploadInfo
+from migration_eval.server.models import GpuReportInfo, ProviderStatus, RunRequest, RunStatus, RunSummary, UploadInfo
 from migration_eval.server.store import NotFound, Store
 
 CHUNK_BYTES = 1024 * 1024
+MAX_GPU_PROFILE_BYTES = 64 * 1024 * 1024  # a long capture on a big machine is a few MB; this is generous
+GPU_PRICES_FILENAME = "gpu_prices.yaml"  # looked for next to the catalog
 
 
 def _detail(message: str, status_code: int) -> JSONResponse:
     return JSONResponse({"detail": message}, status_code=status_code)
+
+
+async def _read_capped(file: UploadFile, limit: int) -> bytes:
+    """The upload's bytes, refused (413) as soon as they pass `limit`, before the rest is read."""
+    chunks: list[bytes] = []
+    size = 0
+    while chunk := await file.read(CHUNK_BYTES):
+        size += len(chunk)
+        if size > limit:
+            raise RequestRejected(f"The file is larger than the {limit // (1024 * 1024)} MB limit.", 413)
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _gpu_prices(catalog_path: Path) -> PriceTable | None:
+    """gpu_prices.yaml next to the catalog, or None when there is none (costs are then left out)."""
+    path = catalog_path.parent / GPU_PRICES_FILENAME
+    return load_prices(path) if path.exists() else None
 
 
 def create_app(
@@ -136,6 +167,32 @@ def create_app(
     @app.delete("/api/runs/{run_id}", status_code=204)
     def delete_run(run_id: str) -> Response:
         manager.delete_run(run_id)
+        return Response(status_code=204)
+
+    @app.post("/api/gpu/reports", status_code=201)
+    async def create_gpu_report(file: UploadFile = File(...), upload_id: str | None = Form(None)) -> GpuReportInfo:
+        """Validate the profile, build the report (with the export's records when one is picked), store it."""
+        data = await _read_capped(file, MAX_GPU_PROFILE_BYTES)
+        try:
+            text = data.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            raise FileRejected("The file is not UTF-8 text. Upload the gpu_profile.json that `migration-eval gpu capture` wrote.") from None
+        profile = parse_profile(text, "The file")
+        records = await asyncio.to_thread(store.load_records, upload_id) if upload_id else None
+        report = await asyncio.to_thread(build_gpu_report, profile, _gpu_prices(catalog_path), records)
+        return await asyncio.to_thread(store.save_gpu_report, file.filename or "gpu_profile.json", report, upload_id)
+
+    @app.get("/api/gpu/reports")
+    def list_gpu_reports() -> list[GpuReportInfo]:
+        return store.list_gpu_reports()
+
+    @app.get("/api/gpu/reports/{report_id}")
+    def get_gpu_report(report_id: str) -> GpuReport:
+        return store.get_gpu_report(report_id)
+
+    @app.delete("/api/gpu/reports/{report_id}", status_code=204)
+    def delete_gpu_report(report_id: str) -> Response:
+        store.delete_gpu_report(report_id)
         return Response(status_code=204)
 
     if frontend_dist is not None and (frontend_dist / "index.html").exists():

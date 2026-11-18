@@ -68,21 +68,26 @@ def read_profile(path: Path) -> GpuProfile:
     Raise FileRejected on invalid JSON, an unknown schema version, or a file that doesn't
     validate, matching how `export` rejects records.
     """
+    return parse_profile(path.read_text(encoding="utf-8"), str(path))
+
+
+def parse_profile(text: str, name: str = "The file") -> GpuProfile:
+    """`read_profile` for text already in memory (the server's uploads). `name` starts each message."""
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(text)
     except json.JSONDecodeError:
-        raise FileRejected(f"{path} is not valid JSON.") from None
+        raise FileRejected(f"{name} is not valid JSON.") from None
     if not isinstance(data, dict):
-        raise FileRejected(f"{path} is not a JSON object.")
+        raise FileRejected(f"{name} is not a JSON object.")
 
     version = data.get("schema_version")
     if version != GPU_PROFILE_SCHEMA_VERSION:
         raise FileRejected(
-            f"{path} has schema_version {version!r}; this CLI reads {GPU_PROFILE_SCHEMA_VERSION!r}. "
+            f"{name} has schema_version {version!r}; this CLI reads {GPU_PROFILE_SCHEMA_VERSION!r}. "
             "Re-run `gpu capture` with this version of the CLI."
         )
     try:
         return GpuProfile.model_validate(data)
     except ValidationError as exc:
         where = ", ".join(".".join(str(p) for p in e["loc"]) for e in exc.errors()[:3])
-        raise FileRejected(f"{path} is not a valid GPU profile (check: {where}).") from None
+        raise FileRejected(f"{name} is not a valid GPU profile (check: {where}).") from None
