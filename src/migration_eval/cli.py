@@ -45,6 +45,8 @@ from migration_eval.gpu.profile import (
     read_profile,
     write_profile,
 )
+from migration_eval.gpu.prices import DEFAULT_PRICES_PATH, load_prices
+from migration_eval.gpu.report import build_gpu_report
 from migration_eval.gpu.serving import collect_serving_settings
 from migration_eval.gpu.samples import (
     DEFAULT_DURATION_S,
@@ -342,6 +344,34 @@ def gpu_assess_command(
     except FileRejected as rejected:
         _reject(rejected)
     typer.echo(assess(profile).model_dump_json(indent=2))
+
+
+@gpu_app.command("report")
+def gpu_report_command(
+    profile_path: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True, help="gpu_profile.json"),
+    prices_path: Path = typer.Option(
+        DEFAULT_PRICES_PATH, "--prices", help="GPU price list (GPU-10); costs are skipped when it's missing."
+    ),
+    records_path: Path | None = typer.Option(
+        None, "--records", exists=True, dir_okay=False, help="Recorder logs (v0 JSONL), for cost per million tokens."
+    ),
+    out: Path | None = typer.Option(None, "--out", help="Write the report JSON here instead of printing it."),
+) -> None:
+    """The GPU report as JSON: assessment, recommendations, costs and checklist (GPU-5 to GPU-9)."""
+    try:
+        profile = read_profile(profile_path)
+        prices = load_prices(prices_path) if prices_path.exists() else None
+        records = load_records(records_path) if records_path is not None else None
+    except FileRejected as rejected:
+        _reject(rejected)
+    if prices is None:
+        typer.echo(f"No price list at {prices_path}: costs are left out.", err=True)
+    text = build_gpu_report(profile, prices, records).model_dump_json(indent=2)
+    if out is None:
+        typer.echo(text)
+    else:
+        out.write_text(text + "\n", encoding="utf-8")
+        typer.echo(f"Wrote {out}")
 
 
 @app.command("run")
