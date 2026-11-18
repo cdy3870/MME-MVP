@@ -39,6 +39,7 @@ class GpuInfo(BaseModel):
     max_mem_clock_mhz: int | None = None
     pcie_gen_max: int | None = None
     pcie_width_max: int | None = None
+    persistence_mode: bool | None = None  # "Enabled" / "Disabled"; None on Windows (N/A) or not reported
 
 
 class Topology(BaseModel):
@@ -106,6 +107,13 @@ def _int(element: ET.Element, *paths: str) -> int | None:
     return None if value is None else int(value)
 
 
+def _enabled(element: ET.Element, path: str) -> bool | None:
+    value = _text(element, path)
+    if value is None:
+        return None
+    return {"enabled": True, "disabled": False}.get(value.lower())
+
+
 def parse_query_xml(xml_text: str) -> tuple[str, str | None, list[GpuInfo]]:
     """Parse `nvidia-smi -q -x` into (driver_version, cuda_version, gpus).
 
@@ -145,6 +153,7 @@ def parse_query_xml(xml_text: str) -> tuple[str, str | None, list[GpuInfo]]:
                 max_mem_clock_mhz=_int(gpu, "max_clocks/mem_clock"),
                 pcie_gen_max=_int(gpu, f"{link}/pcie_gen/max_link_gen"),
                 pcie_width_max=_int(gpu, f"{link}/link_widths/max_link_width"),
+                persistence_mode=_enabled(gpu, "persistence_mode"),
             )
         )
     if not gpus:

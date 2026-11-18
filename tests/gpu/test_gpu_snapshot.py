@@ -17,6 +17,7 @@ QUERY_XML = """<?xml version="1.0" ?>
     <product_name>NVIDIA H100 80GB HBM3</product_name>
     <uuid>GPU-aaaa</uuid>
     <minor_number>0</minor_number>
+    <persistence_mode>Disabled</persistence_mode>
     <fb_memory_usage><total>81559 MiB</total></fb_memory_usage>
     <pci><pci_gpu_link_info>
       <pcie_gen><max_link_gen>5</max_link_gen></pcie_gen>
@@ -54,6 +55,7 @@ def test_parse_query_xml_reads_driver_and_gpus():
     assert gpus[0].memory_total_mib == 81559
     assert gpus[0].power_limit_w == 700.0
     assert gpus[0].pcie_gen_max == 5 and gpus[0].pcie_width_max == 16
+    assert (gpus[0].persistence_mode, gpus[1].persistence_mode) == (False, None)
 
 
 def test_parse_query_xml_maps_na_and_missing_to_none():
