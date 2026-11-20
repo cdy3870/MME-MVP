@@ -48,6 +48,10 @@ IMBALANCE_SPREAD_PCT = 20.0  # busiest minus idlest mean utilization
 LOW_MEMORY_HEADROOM_PCT = 10.0  # peak memory use above 90% of total
 POWER_NEAR_LIMIT_PCT = 95.0  # p95 power draw at or above 95% of the limit
 THROTTLED_FRACTION = 0.05  # slowdown active in at least 5% of samples
+BUSY_UTIL_PCT = 50.0  # samples at or above this utilization count as "under load" for clock stability
+MIN_BUSY_SAMPLES = 10  # fewer loaded samples than this: don't judge clock stability
+CLOCK_SWING_CV_PCT = 5.0  # SM clock stdev / mean under load at or above this is "unstable"
+CLOCK_STEP_MHZ = 15  # NVIDIA clock steps; suggested lock values are rounded down to one
 CROSS_SOCKET_LINKS = ("SYS",)  # topo -m: traffic crosses the CPU interconnect between sockets
 
 
@@ -71,9 +75,13 @@ class GpuUsage(BaseModel):
     power_draw_w: Stat | None = None
     temperature_c: Stat | None = None
     sm_clock_mhz: Stat | None = None
+    # SM clock over samples at or above BUSY_UTIL_PCT only: idle samples drop clocks on purpose,
+    # so they'd make any GPU look unstable.
+    sm_clock_under_load_mhz: Stat | None = None
     # Limits, and how much room was left against them (measured, GPU-8).
     memory_total_mib: float | None = None  # snapshot, else the samples
     power_limit_w: float | None = None  # samples (limit in force), else the snapshot
+    max_power_limit_w: float | None = None  # snapshot: the most the limit can be raised to
     memory_headroom_pct: float | None = None  # 100 * (total - memory_used_mib.max) / total
     power_headroom_pct: float | None = None  # 100 * (limit - power_draw_w.p95) / limit
 
@@ -109,10 +117,11 @@ class TopologySummary(BaseModel):
 class Finding(BaseModel):
     """One observation for GPU-6 and GPU-9 to act on."""
 
-    kind: Literal["imbalance", "memory_headroom", "power_limit", "thermal", "hw_slowdown", "cross_socket", "numa_affinity", "idle_capture", "missing_data"]
+    kind: Literal["imbalance", "memory_headroom", "power_limit", "thermal", "hw_slowdown", "cross_socket", "numa_affinity", "idle_capture", "persistence_off", "clock_instability", "missing_data"]
     severity: Literal["info", "warning", "critical"]
     gpus: list[int]
-    message: str
+    message: str  # what was measured
+    suggestion: str | None = None  # what to do about it, when there is something to do
     basis: Literal["measured"] = "measured"
 
 
@@ -146,6 +155,12 @@ def _last(values: list[float | None]) -> float | None:
         if v is not None:
             return v
     return None
+
+
+def _busy_sm_clocks(rows: list[Sample]) -> list[float]:
+    """SM clocks from samples under load (utilization >= BUSY_UTIL_PCT)."""
+    return [r.sm_clock_mhz for r in rows
+            if r.sm_clock_mhz is not None and r.utilization_gpu_pct is not None and r.utilization_gpu_pct >= BUSY_UTIL_PCT]
 
 
 def usage_by_gpu(samples: list[Sample], snapshot: Snapshot) -> list[GpuUsage]:
@@ -182,8 +197,10 @@ def usage_by_gpu(samples: list[Sample], snapshot: Snapshot) -> list[GpuUsage]:
                                     power_draw_w=power_draw_stats,
                                     temperature_c=summarize([row.temperature_c for row in rows]),
                                     sm_clock_mhz=summarize([row.sm_clock_mhz for row in rows]),
+                                    sm_clock_under_load_mhz=summarize(_busy_sm_clocks(rows)),
                                     memory_total_mib=memory_total,
                                     power_limit_w=power_limit,
+                                    max_power_limit_w=gpu.max_power_limit_w,
                                     memory_headroom_pct=memory_headroom_pct,
                                     power_headroom_pct=power_headroom_pct))
 
@@ -372,10 +389,74 @@ def _gpu_list(indexes: list[int]) -> str:
     return ", ".join(str(i) for i in indexes)
 
 
+def _power_limit_suggestion(power_limited: list[GpuUsage]) -> str:
+    """Raise the limit where the card allows it; otherwise say clocks are as high as power allows."""
+    raisable = [u for u in power_limited if u.max_power_limit_w and u.power_limit_w and u.power_limit_w < u.max_power_limit_w - 1]
+    at_max = [u for u in power_limited if u.max_power_limit_w and u.power_limit_w and u not in raisable]
+    parts = []
+    for u in raisable:
+        parts.append(f"GPU {u.index} is limited to {u.power_limit_w:.0f} W but allows {u.max_power_limit_w:.0f} W: raising it "
+                     f"(`sudo nvidia-smi -i {u.index} -pl {u.max_power_limit_w:.0f}`) lets boost clocks go higher, if cooling "
+                     "and the power budget allow.")
+    if at_max:
+        verb = "runs" if len(at_max) == 1 else "run"
+        parts.append(f"GPU {_gpu_list([u.index for u in at_max])} already {verb} at the card's maximum power limit, so boost "
+                     "clocks are as high as power allows and clock or power tuning won't add speed; look to serving settings "
+                     "(lower-precision weights, batching, prefix caching) instead.")
+    if not parts:
+        parts.append("Check `nvidia-smi -q -d POWER` for the Max Power Limit: if the current limit is lower, raising it with "
+                     "`nvidia-smi -pl` lets boost clocks go higher.")
+    return " ".join(parts)
+
+
+def _clock_instability_findings(assessment: GpuAssessment, profile: GpuProfile) -> list[Finding]:
+    """One info finding per GPU whose SM clock swings under load (stdev/mean >= CLOCK_SWING_CV_PCT).
+
+    The suggestion depends on why: heat means fix cooling first (locking would hide it);
+    otherwise (usually the power cap) lock the SM clock near what the GPU sustains under load,
+    for steadier latency at a small cost in peak throughput.
+    """
+    throttling = {t.index: t for t in assessment.throttling}
+    findings = []
+    for u in assessment.usage:
+        stat = u.sm_clock_under_load_mhz
+        if stat is None or stat.samples < MIN_BUSY_SAMPLES or stat.mean <= 0:
+            continue
+        clocks = _busy_sm_clocks([s for s in profile.samples if s.index == u.index])
+        cv_pct = 100 * float(np.std(clocks)) / stat.mean
+        if cv_pct < CLOCK_SWING_CV_PCT:
+            continue
+        t = throttling.get(u.index)
+        cause = ""
+        if t is not None and t.thermal_fraction >= THROTTLED_FRACTION:
+            cause = f", thermal slowdown in {t.thermal_fraction:.0%} of samples"
+        elif t is not None and t.power_fraction >= THROTTLED_FRACTION:
+            cause = f", power-capped in {t.power_fraction:.0%} of samples"
+        message = (f"GPU {u.index} SM clock swung under load: {stat.min:.0f}-{stat.max:.0f} MHz, median {stat.p50:.0f} MHz, "
+                   f"stdev {cv_pct:.1f}% of the mean over {stat.samples} loaded samples{cause}.")
+        if t is not None and t.thermal_fraction >= THROTTLED_FRACTION:
+            suggestion = ("Clocks drop for heat: fix cooling first (airflow, fan curve, room or rack temperature). Don't lock "
+                          "clocks to hide it; recheck stability once the thermal slowdown is gone.")
+        else:
+            lock = int(np.percentile(clocks, 25) // CLOCK_STEP_MHZ * CLOCK_STEP_MHZ)
+            suggestion = (f"If steady latency matters more than peak throughput, lock the SM clock near what the GPU holds "
+                          f"under load (it was at or above {lock} MHz in 75% of loaded samples): "
+                          f"`sudo nvidia-smi -i {u.index} -lgc {lock},{lock}`, undo with `-rgc`. This trades a little peak "
+                          "throughput for consistency and won't raise average speed; compare repeated benchmark runs "
+                          "before keeping it.")
+        findings.append(Finding(kind="clock_instability", severity="info", gpus=[u.index], message=message, suggestion=suggestion))
+    return findings
+
+
 def build_findings(assessment: GpuAssessment, profile: GpuProfile) -> list[Finding]:
     """Turn the numbers into findings using the thresholds at the top of this module.
 
-    Also: idle_capture when the profile carries an idle warning (GPU-2), and missing_data for
+    Findings carry a suggestion when there is something to do: raise a power limit that is
+    below the card's max (or say it can't go higher), enable persistence mode, lock clocks or
+    fix cooling for clock_instability (info, SM clock stdev/mean under load >= CLOCK_SWING_CV_PCT).
+
+    Also: persistence_off (info) for GPUs whose snapshot says persistence mode is off,
+    idle_capture when the profile carries an idle warning (GPU-2), and missing_data for
     each important input that wasn't collected (topology, NUMA, CPU samples), so the report
     says what it couldn't assess. Most severe first.
     """
@@ -422,7 +503,8 @@ def build_findings(assessment: GpuAssessment, profile: GpuProfile) -> list[Findi
         detail = "; ".join(f"GPU {u.index} p95 {u.power_draw_w.p95:.0f} W of a {u.power_limit_w:.0f} W limit, "
                            f"power-capped in {power_fraction.get(u.index, 0):.0%} of samples" for u in power_limited)
         findings.append(Finding(kind="power_limit", severity="warning", gpus=[u.index for u in power_limited],
-                                message=f"Running at the power limit: {detail}."))
+                                message=f"Running at the power limit: {detail}.",
+                                suggestion=_power_limit_suggestion(power_limited)))
 
     thermal_throttled = []
     hw_throttled = []
@@ -444,6 +526,8 @@ def build_findings(assessment: GpuAssessment, profile: GpuProfile) -> list[Findi
         findings.append(Finding(kind="hw_slowdown", severity="critical", gpus=[t.index for t, _ in hw_throttled],
                                 message=f"Hardware slowdown (cooling or power delivery): {detail}."))
 
+    findings.extend(_clock_instability_findings(assessment, profile))
+
     pairs = assessment.topology.cross_socket_pairs
     if pairs:
         gpus = sorted({i for pair in pairs for i in pair})
@@ -455,6 +539,16 @@ def build_findings(assessment: GpuAssessment, profile: GpuProfile) -> list[Findi
     if outside:
         findings.append(Finding(kind="numa_affinity", severity="warning", gpus=[],
                                 message=f"GPU process(es) {_gpu_list(outside)} ran on CPU cores outside the GPUs' NUMA nodes."))
+
+    persistence_off = [g.index for g in profile.snapshot.gpus if g.persistence_mode is False]
+    if persistence_off:
+        findings.append(Finding(kind="persistence_off", severity="info", gpus=persistence_off,
+                                message=f"Persistence mode is off on GPU {_gpu_list(persistence_off)}: when no process holds a GPU, "
+                                        "the driver unloads and the next process pays its start-up again.",
+                                suggestion="Enable it with `sudo nvidia-smi -pm 1` (until reboot) or the nvidia-persistenced service "
+                                           "(survives reboots). It speeds up short or intermittent GPU jobs; a server that stays "
+                                           "running already keeps the driver loaded, so it gains little there. The cost is "
+                                           "slightly higher idle power."))
 
     if profile.idle_warning:
         findings.append(Finding(kind="idle_capture", severity="warning", gpus=profile.idle_warning.idle_gpus,

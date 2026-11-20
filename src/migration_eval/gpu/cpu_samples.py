@@ -4,8 +4,13 @@ Both run in the background for the whole capture, with the same interval and cou
 GPU loop (see commands.BackgroundCommand), so the CPU samples line up with the GPU samples:
 
     mpstat -o JSON -P ALL <interval> <count>    JSON (sysstat >= 11.5). Per-CPU and "all".
-    pidstat -u -h -l <interval> <count>         Text, one line per process per interval, with
-                                                epoch timestamps (-h) and full command lines (-l).
+    pidstat -u -h -l <interval> <count>         Text, one line per process per interval, all on
+                                                one line (-h), with full command lines (-l).
+
+pidstat's Time column depends on the sysstat version: older ones print seconds since the
+epoch with -h, newer ones (12.x, e.g. 12.5.2 on Ubuntu 22.04) print local clock time
+("04:26:42", or "04:26:42 PM" in a 12-hour locale). The parser takes either; clock times
+are dated from the capture's start, rolling past midnight.
 
 Both take whole seconds. If --interval isn't a whole number, round it up for these two and
 say so; the GPU samples keep the exact interval.
@@ -178,19 +183,58 @@ def _redact_command(command: str) -> str:
     return shlex.join(redact_command_line(argv))
 
 
-def parse_pidstat(text: str, top_n: int = PIDSTAT_TOP_N, gpu_pids: frozenset[int] = frozenset()) -> list[ProcessCpuSample]:
+_CLOCK = re.compile(r"^(\d{1,2}):(\d{2}):(\d{2})(?:\s+([AaPp][Mm]))?(?=\s)")
+
+
+def _normalize_clock(line: str) -> str:
+    """Rewrite a leading "HH:MM:SS[ AM|PM]" as "HH:MM:SS" in 24-hour form, so it is one cell."""
+    match = _CLOCK.match(line)
+    if match is None or match.group(4) is None:
+        return line
+    hour = int(match.group(1)) % 12 + (12 if match.group(4).lower() == "pm" else 0)
+    return f"{hour:02d}:{match.group(2)}:{match.group(3)}" + line[match.end():]
+
+
+class _ClockDater:
+    """Date clock-time rows from the capture start, moving to the next day when time goes back."""
+
+    def __init__(self, started_at: datetime):
+        self.local_start = started_at.astimezone()  # pidstat prints the machine's local time
+        self.day = self.local_start.date()
+        self.last: datetime | None = None
+
+    def __call__(self, cell: str) -> datetime:
+        hh, mm, ss = (int(x) for x in cell.split(":"))
+        moment = datetime.combine(self.day, time(hh, mm, ss), tzinfo=self.local_start.tzinfo)
+        floor = self.last or (self.local_start - timedelta(minutes=5))  # pidstat starts with the capture
+        if moment < floor:
+            self.day += timedelta(days=1)
+            moment += timedelta(days=1)
+        self.last = moment
+        return moment.astimezone(timezone.utc)
+
+
+def parse_pidstat(
+    text: str,
+    top_n: int = PIDSTAT_TOP_N,
+    gpu_pids: frozenset[int] = frozenset(),
+    started_at: datetime | None = None,
+) -> list[ProcessCpuSample]:
     """Parse `pidstat -u -h -l`.
 
     Find the "# Time ... Command" header and read columns by its names (sysstat versions
-    add and drop columns, e.g. %wait). Time is seconds since the epoch. Command is the rest
+    add and drop columns, e.g. %wait). Time is seconds since the epoch or local clock time
+    (see the module docstring); clock-time rows need started_at and are skipped without it.
+    Command is the rest
     of the line and may contain spaces. Keep processes in gpu_pids (marked uses_gpu) plus
     the top_n by mean %CPU; drop the rest. Redact secrets in command lines.
     """
     columns: list[str] | None = None
     rows: list[ProcessCpuSample] = []
+    date_clock = _ClockDater(started_at) if started_at is not None else None
 
     for line in text.splitlines():
-        stripped = line.strip()
+        stripped = _normalize_clock(line.strip())
         if not stripped:
             continue
         if stripped.startswith("#"):
@@ -206,7 +250,12 @@ def parse_pidstat(text: str, top_n: int = PIDSTAT_TOP_N, gpu_pids: frozenset[int
         row = dict(zip(columns, cells))
         try:
             pid = int(row["PID"])
-            taken_at = datetime.fromtimestamp(int(float(row["Time"])), tz=timezone.utc)
+            if ":" in row["Time"]:
+                if date_clock is None:
+                    continue
+                taken_at = date_clock(row["Time"])
+            else:
+                taken_at = datetime.fromtimestamp(int(float(row["Time"])), tz=timezone.utc)
             cpu_pct = float(row["%CPU"].replace(",", "."))
             core = int(row["CPU"]) if "CPU" in row else None
         except (KeyError, ValueError):
@@ -252,6 +301,7 @@ class CpuSampler:
         self.pidstat = BackgroundCommand(pidstat_args(interval_s, count))
 
     def start(self) -> None:
+        self.started_at = datetime.now(timezone.utc)  # dates pidstat's clock-time rows
         self.mpstat.start()
         self.pidstat.start()
 
@@ -270,7 +320,8 @@ class CpuSampler:
 
         process_samples: list[ProcessCpuSample] = []
         if pidstat_result.stdout:
-            process_samples = parse_pidstat(pidstat_result.stdout, gpu_pids=gpu_pids)
+            process_samples = parse_pidstat(pidstat_result.stdout, gpu_pids=gpu_pids,
+                                            started_at=getattr(self, "started_at", None))
 
         # Command lines can carry secrets; the profile keeps the raw output for re-parsing,
         # so store pidstat's with the same redaction as the parsed rows.

@@ -17,19 +17,20 @@ QUERY_XML = """<?xml version="1.0" ?>
     <product_name>NVIDIA H100 80GB HBM3</product_name>
     <uuid>GPU-aaaa</uuid>
     <minor_number>0</minor_number>
-    <persistence_mode>Disabled</persistence_mode>
+    <persistence_mode>Enabled</persistence_mode>
     <fb_memory_usage><total>81559 MiB</total></fb_memory_usage>
     <pci><pci_gpu_link_info>
       <pcie_gen><max_link_gen>5</max_link_gen></pcie_gen>
       <link_widths><max_link_width>16x</max_link_width></link_widths>
     </pci_gpu_link_info></pci>
-    <gpu_power_readings><current_power_limit>700.00 W</current_power_limit></gpu_power_readings>
+    <gpu_power_readings><current_power_limit>700.00 W</current_power_limit><max_power_limit>700.00 W</max_power_limit></gpu_power_readings>
     <max_clocks><sm_clock>1980 MHz</sm_clock><mem_clock>2619 MHz</mem_clock></max_clocks>
   </gpu>
   <gpu id="00000000:2A:00.0">
     <product_name>NVIDIA H100 80GB HBM3</product_name>
     <uuid>GPU-bbbb</uuid>
     <minor_number>1</minor_number>
+    <persistence_mode>Disabled</persistence_mode>
     <fb_memory_usage><total>81559 MiB</total></fb_memory_usage>
     <gpu_power_readings><current_power_limit>N/A</current_power_limit></gpu_power_readings>
   </gpu>
@@ -54,8 +55,15 @@ def test_parse_query_xml_reads_driver_and_gpus():
     assert [g.uuid for g in gpus] == ["GPU-aaaa", "GPU-bbbb"]
     assert gpus[0].memory_total_mib == 81559
     assert gpus[0].power_limit_w == 700.0
+    assert gpus[0].max_power_limit_w == 700.0 and gpus[1].max_power_limit_w is None
     assert gpus[0].pcie_gen_max == 5 and gpus[0].pcie_width_max == 16
-    assert (gpus[0].persistence_mode, gpus[1].persistence_mode) == (False, None)
+
+
+def test_parse_query_xml_reads_persistence_mode():
+    _, _, gpus = parse_query_xml(QUERY_XML)
+    assert [g.persistence_mode for g in gpus] == [True, False]
+    na = QUERY_XML.replace("<persistence_mode>Enabled</persistence_mode>", "<persistence_mode>N/A</persistence_mode>")
+    assert parse_query_xml(na)[2][0].persistence_mode is None
 
 
 def test_parse_query_xml_maps_na_and_missing_to_none():
