@@ -1,0 +1,9 @@
+# Only pyproject.toml, src/, catalog/ and docker/ go into the image.
+*
+!pyproject.toml
+!src/
+!catalog/
+!docker/
+**/__pycache__
+**/*.pyc
+**/*.egg-info

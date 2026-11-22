@@ -1,0 +1,12 @@
+# Copy to terraform.tfvars and edit. terraform.tfvars is git-ignored.
+
+region = "us-east-1"
+
+# Free Tier plan accounts can only launch Free Tier eligible types.
+instance_types = ["m7i-flex.large"]
+max_vcpus      = 8
+
+partners = {
+  test = {}
+  # acme = { kms_key_arn = "arn:aws:kms:us-east-1:123456789012:key/..." }  # bring an existing key
+}
