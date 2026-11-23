@@ -10,7 +10,20 @@ export interface RunScreenProps {
 
 const ACTIVE = ["queued", "running", "cancelling"];
 
+// On AWS Batch, the stages before the run's own: an instance booting, then the image pull. Batch
+// reports no progress for these, and a warm instance takes seconds where a cold one takes minutes,
+// so the screen shows the time waited rather than an estimate.
+const MACHINE_STAGES = ["waiting for a machine", "starting the worker"];
+const SLOW_MACHINE_SECONDS = 600; // past this, instances usually can't launch at all
+
+function clock(seconds: number): string {
+  const s = Math.floor(seconds);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
 function describe(stage: string): string {
+  if (stage === "waiting for a machine") return "Waiting for a machine";
+  if (stage === "starting the worker") return "Starting the worker";
   if (stage === "prepare") return "Reading the records";
   if (stage === "candidates") return "Choosing candidate models";
   if (stage === "baseline") return "Measuring the current model (three replays)";
@@ -63,6 +76,12 @@ export function RunScreen({ run: initial, onViewReport }: RunScreenProps) {
   const stages = [...run.stages_done, ...(run.stage && !run.stages_done.includes(run.stage) ? [run.stage] : [])];
   const spend = run.spent_usd;
   const cap = run.spending_cap_usd;
+  // The screen re-renders on every poll (about once a second), which keeps this current.
+  const preparing = active && run.stage !== null && MACHINE_STAGES.includes(run.stage);
+  const waited = Math.max(0, (Date.now() - new Date(run.started_at).getTime()) / 1000);
+  const callsDone = run.calls_done;
+  const callsTotal = run.calls_total;
+  const counting = active && callsDone != null && callsTotal != null && callsTotal > 0;
 
   return (
     <main>
@@ -79,11 +98,31 @@ export function RunScreen({ run: initial, onViewReport }: RunScreenProps) {
               return (
                 <li key={stage} className={done ? "done" : "current"}>
                   <span aria-hidden="true">{done ? "✓" : "…"}</span> {describe(stage)}
+                  {!done && counting && stage === run.stage && <span className="muted-text"> — {callsDone} of {callsTotal} requests</span>}
+                  {!done && preparing && stage === run.stage && <span className="muted-text"> — {clock(waited)}</span>}
                   {!done && <span className="visually-hidden"> (in progress)</span>}
                 </li>
               );
             })}
           </ol>
+
+          {preparing && waited >= SLOW_MACHINE_SECONDS && (
+            <p className="hint">
+              Over 10 minutes usually means AWS can't launch an instance (instance type, quota or account limits). Check the
+              compute environment's Auto Scaling activity in the EC2 console.
+            </p>
+          )}
+
+          {counting && (
+            <div className="meter">
+              <label>
+                <span>
+                  Requests in this stage: {callsDone} of {callsTotal}
+                </span>
+                <progress value={Math.min(callsDone, callsTotal)} max={callsTotal} />
+              </label>
+            </div>
+          )}
 
           {spend != null && cap != null && (
             <div className="meter">
@@ -102,6 +141,9 @@ export function RunScreen({ run: initial, onViewReport }: RunScreenProps) {
           <p className="error" role="alert">
             <strong>The run failed.</strong> {run.error ?? "No reason was given."}
           </p>
+        )}
+        {run.state === "cancelling" && run.batch_job_id && (
+          <p className="notice">Stopping: calls already sent finish first, which can take up to 30 seconds.</p>
         )}
         {run.state === "cancelled" && <p className="notice">The run was stopped. Candidates that had not finished are marked &ldquo;insufficient data&rdquo;.</p>}
 

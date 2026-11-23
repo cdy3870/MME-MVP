@@ -13,6 +13,13 @@ export interface ConfigureScreenProps {
 // How many different prompts each tier replays at most. These mirror run.TIER_SAMPLE_SIZE.
 const TIER_PROMPTS: Record<Tier, number> = { smoke: 50, full: 200 };
 
+/** Where a missing key goes: the server's environment, or the partner's secret for runs on AWS Batch. */
+function whereToSetKey(p: ProviderStatus): string {
+  return p.key_source === "secret"
+    ? `add ${p.key_variable} to the ${p.key_secret ?? "provider-key"} secret in AWS Secrets Manager`
+    : `set ${p.key_variable} where the server runs`;
+}
+
 /**
  * Step 2: set up the run. Provider keys are never typed here: a provider with no key on the server is
  * disabled and names the environment variable to set. The current model's provider is always listed
@@ -57,7 +64,7 @@ export function ConfigureScreen({ upload, component, onStarted, onBack }: Config
     : !(capValue > 0) ? "The spending cap must be more than 0."
     : costCap !== "" && !(Number(costCap) > 0) ? "The monthly cost cap must be more than 0 (or left empty)."
     : !(speedValue > 0) ? "The replay speed must be more than 0."
-    : incumbentKey && !incumbentKey.key_configured ? `The current model's provider needs a key too: set ${incumbentKey.key_variable} where the server runs.`
+    : incumbentKey && !incumbentKey.key_configured ? `The current model's provider needs a key too: ${whereToSetKey(incumbentKey)}.`
     : null;
 
   function toggle(name: string, on: boolean) {
@@ -129,7 +136,7 @@ export function ConfigureScreen({ upload, component, onStarted, onBack }: Config
                 <input type="checkbox" disabled={!p.key_configured} checked={allow.includes(p.name)} onChange={(e) => toggle(p.name, e.target.checked)} />
                 <span>
                   {p.name}
-                  {!p.key_configured && <span className="hint"> — no key: set {p.key_variable} where the server runs</span>}
+                  {!p.key_configured && <span className="hint"> — no key: {whereToSetKey(p)}</span>}
                 </span>
               </label>
             ))}
