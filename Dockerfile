@@ -12,10 +12,10 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# The package and its dependencies, then boto3 for the entrypoint's S3 calls.
+# The package with its AWS extra (boto3, for the entrypoint's S3 and Secrets Manager calls).
 COPY pyproject.toml ./
 COPY src ./src
-RUN pip install . boto3
+RUN pip install ".[aws]"
 
 # The CLI reads catalog/catalog.yaml relative to the working directory.
 COPY catalog ./catalog
