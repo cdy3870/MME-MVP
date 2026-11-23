@@ -24,6 +24,10 @@ class ProviderStatus(ApiModel):
     name: str  # "openai", "anthropic", "gemini"
     key_variable: str  # the environment variable the server reads, e.g. "ANTHROPIC_API_KEY"
     key_configured: bool  # never the key itself
+    # Where the key is kept: the server's environment (local runs), or the partner's Secrets
+    # Manager secret (runs on AWS Batch), named in key_secret.
+    key_source: Literal["environment", "secret"] = "environment"
+    key_secret: str | None = None
 
 
 class ComponentInfo(ApiModel):
@@ -67,11 +71,16 @@ class RunStatus(ApiModel):
     stage: str | None = None  # "prepare", "candidates", "baseline", "candidate <provider>/<model>", "report"
     stages_done: list[str] = []
     spent_usd: float | None = None  # read live from the run's spend meter while it is going
+    # Replayed requests of the current stage (the baseline or a candidate), while it is going;
+    # None in stages that replay nothing. Early stopping can end a candidate below the total.
+    calls_done: int | None = None
+    calls_total: int | None = None
     spending_cap_usd: float | None = None
     started_at: datetime
     finished_at: datetime | None = None
     error: str | None = None  # why a run failed, in words the user can act on
     has_report: bool = False
+    batch_job_id: str | None = None  # set when the run executes as an AWS Batch job
 
 
 class RunSummary(ApiModel):

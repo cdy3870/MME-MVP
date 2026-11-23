@@ -134,6 +134,14 @@ class Store:
             raise NotFound(upload_id) from None
         return [CallRecord.model_validate_json(line) for line in lines if line.strip()]
 
+    def read_records_bytes(self, upload_id: str) -> bytes:
+        """The upload's records file as stored (v0 JSONL), for handing to a remote worker. Raise `NotFound`."""
+        folder = self._folder(self._uploads, upload_id)
+        try:
+            return (folder / "records.jsonl").read_bytes()
+        except OSError:
+            raise NotFound(upload_id) from None
+
     def delete_upload(self, upload_id: str) -> None:
         """Remove the upload's folder. Raise `NotFound`."""
         shutil.rmtree(self._folder(self._uploads, upload_id))

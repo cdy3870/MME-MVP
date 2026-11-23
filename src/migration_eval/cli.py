@@ -549,12 +549,26 @@ def serve_command(
     ),
     catalog: Path = typer.Option(Path("catalog/catalog.yaml"), "--catalog", exists=True, dir_okay=False),
     allow_remote: bool = typer.Option(False, "--allow-remote", help="Listen on a non-local address anyway."),
+    executor: str = typer.Option("local", "--executor", help="local (runs in this process) or batch (AWS Batch jobs, see infra/terraform)."),
+    partner: str = typer.Option("test", "--partner", help="With --executor batch: the partner whose job definition, bucket prefix and key to use."),
+    queue: str = typer.Option("mme-runs", "--queue", help="With --executor batch: the job queue."),
+    job_definition: str | None = typer.Option(None, "--job-definition", help="With --executor batch: default mme-worker-<partner>."),
+    region: str | None = typer.Option(None, "--region", help="With --executor batch: AWS region (default: your AWS config)."),
+    run_timeout: int = typer.Option(3600, "--run-timeout", help="With --executor batch: seconds a run may take before Batch stops it (min 60)."),
 ) -> None:
     """Start the local server and UI: upload an export, run an evaluation, read the report.
 
     Provider API keys are read from the environment, never from the UI. The server has no login,
     so it refuses any address but this machine's unless you pass --allow-remote.
+
+    With --executor batch, each run is an AWS Batch job on the infrastructure in infra/terraform:
+    the records go to the partner's S3 prefix under its KMS key, keys come from the partner's
+    Secrets Manager secret, and the server needs AWS credentials with the orchestrator policy.
     """
+    if executor not in ("local", "batch"):
+        raise typer.BadParameter("must be local or batch", param_hint="--executor")
+    if run_timeout < 60:
+        raise typer.BadParameter("must be at least 60 (the Batch minimum)", param_hint="--run-timeout")
     import ipaddress
 
     import uvicorn
@@ -572,11 +586,26 @@ def serve_command(
             raise typer.Exit(code=1)
         typer.echo(f"Warning: {host!r} is reachable from other machines and the server has no login.", err=True)
 
-    dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
-    app_ = create_app(data_dir, catalog, frontend_dist=dist if dist.exists() else None)
+    batch = None
+    if executor == "batch":
+        from migration_eval.server.batch import BatchRuns, BatchUnavailable
 
-    configured = [name for name, ok in key_status().items() if ok]
-    typer.echo(f"Keys set for: {', '.join(configured) if configured else 'no provider (set OPENAI_API_KEY, ANTHROPIC_API_KEY or GEMINI_API_KEY)'}")
+        try:
+            batch = BatchRuns.connect(partner, queue, job_definition, region, run_timeout)
+        except BatchUnavailable as exc:
+            typer.echo(f"Cannot use AWS Batch: {exc}", err=True)
+            raise typer.Exit(code=1) from None
+        s = batch.settings
+        typer.echo(f"Runs go to AWS Batch: queue {s.queue}, job definition {s.job_definition}, results in s3://{s.bucket}/{s.runs_prefix}/")
+
+    dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+    app_ = create_app(data_dir, catalog, frontend_dist=dist if dist.exists() else None, batch=batch)
+
+    if batch is not None:
+        typer.echo(f"Provider keys come from the Secrets Manager secret {batch.settings.keys_secret_id or '(none set in the job definition)'}")
+    else:
+        configured = [name for name, ok in key_status().items() if ok]
+        typer.echo(f"Keys set for: {', '.join(configured) if configured else 'no provider (set OPENAI_API_KEY, ANTHROPIC_API_KEY or GEMINI_API_KEY)'}")
     typer.echo(f"Data is kept in {data_dir.resolve()}")
     typer.echo(f"Open http://{host}:{port}/?live=1" if dist.exists() else f"API at http://{host}:{port}/api/docs (build the frontend to get the UI: cd frontend && npm run build)")
     uvicorn.run(app_, host=host, port=port, log_level="warning")

@@ -88,6 +88,33 @@ python scripts/batch_smoke.py --mode replay --queue mme-runs --job-definition mm
 
 `--sse-kms-key-id` must be the key's full ARN: the bucket policy compares the ARN exactly.
 
+## Running from the UI
+
+Start the server with the Batch executor, using AWS credentials that have the orchestrator policy:
+
+```bash
+pip install -e ".[aws]"
+migration-eval serve --executor batch --partner test        # queue mme-runs, job definition mme-worker-test
+cd frontend && npm run dev                                   # http://localhost:5173/?live=1
+```
+
+The UI works as before. Behind it, starting a run puts the upload's records in
+`partners/test/uploads/` under the partner's key and submits a job; the run screen shows "Waiting for
+a machine" and "Starting the worker" before the run's own stages, with the spend read from the
+worker's `progress.json`. Stop calls TerminateJob; the worker writes a report of what it finished.
+Restarting the server doesn't lose runs: they keep going in AWS and are picked up again.
+
+The server can store keys in the secret but not read them back, so it can't tell which keys are set.
+Tag the secret with the variable names it holds and the configure screen and the start checks use it:
+
+```bash
+aws secretsmanager tag-resource --secret-id mme/keys/test \
+  --tags Key=mme:key-variables,Value=ANTHROPIC_API_KEY
+```
+
+Without the tag every provider is shown as having a key, and a missing one fails the run in the worker
+with a message naming the variable.
+
 ## What this does not cover yet
 
 * **Per-run roles (RUN-3).** Batch fixes the job role in the job definition and `SubmitJob` can't

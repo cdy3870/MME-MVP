@@ -49,6 +49,7 @@ from migration_eval.gpu.profile import parse_profile
 from migration_eval.gpu.report import GpuReport, build_gpu_report
 from migration_eval.keys import MissingKeys
 from migration_eval.models import Report
+from migration_eval.server.batch import BatchRuns
 from migration_eval.server.jobs import FactoryBuilder, RequestRejected, RunManager, real_factory_builder
 from migration_eval.server.models import GpuReportInfo, ProviderStatus, RunRequest, RunStatus, RunSummary, UploadInfo
 from migration_eval.server.store import NotFound, Store
@@ -85,13 +86,15 @@ def create_app(
     catalog_path: Path,
     factory_builder: FactoryBuilder = real_factory_builder,
     frontend_dist: Path | None = None,
+    batch: BatchRuns | None = None,
 ) -> FastAPI:
     """Build the app: a `Store` in `data_dir`, a `RunManager`, the exception handlers described
     above and the routes below. When `frontend_dist` exists (the output of `npm run build`), serve
     it at `/` with `StaticFiles(..., html=True)` after the `/api` routes, so one process serves both.
+    With `batch`, runs execute as AWS Batch jobs (`server/batch.py`) instead of in this process.
     """
     store = Store(data_dir)
-    manager = RunManager(store, catalog_path, factory_builder)
+    manager = RunManager(store, catalog_path, factory_builder, batch=batch)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
