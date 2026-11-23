@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Report } from "../../../ts/report.v0";
 import { ReportHeader, ReportView } from "../components/ReportView";
-import { urlParams, useTheme, type Theme } from "../theme";
+import { urlParams } from "../theme";
 import { GpuReportView } from "../components/GpuReportView";
 import { formatDate } from "../format";
 import { ApiError, getGpuReport, getReport, getRun } from "./api";
@@ -42,7 +42,6 @@ function setAddress(open?: { run?: string; gpu?: string }) {
  * a particular run (its report when it has one, its progress otherwise).
  */
 export function LiveApp() {
-  const [theme, setTheme] = useTheme();
   const [step, setStep] = useState<Step>({ name: "upload" });
   const [error, setError] = useState<string | null>(null);
 
@@ -96,14 +95,6 @@ export function LiveApp() {
       <button type="button" className="btn" onClick={() => go({ name: "upload" })}>New upload</button>
       <button type="button" className="btn" onClick={() => go({ name: "runs" })}>Past runs</button>
       <button type="button" className="btn" onClick={() => go({ name: "gpu" })}>GPU report</button>
-      <label>
-        Theme
-        <select value={theme} onChange={(e) => setTheme(e.target.value as Theme)}>
-          <option value="system">Match system</option>
-          <option value="light">Light</option>
-          <option value="dark">Dark</option>
-        </select>
-      </label>
     </div>
   );
 
@@ -138,7 +129,7 @@ export function LiveApp() {
       {error && <p className="error" role="alert">{error}</p>}
 
       {step.name === "upload" && (
-        <UploadScreen onChoose={(upload, component) => go({ name: "configure", upload, component })} onShowRuns={() => go({ name: "runs" })} />
+        <UploadScreen onChoose={(upload, component) => go({ name: "configure", upload, component })} />
       )}
       {step.name === "configure" && (
         <ConfigureScreen

@@ -2,13 +2,12 @@ import { useState } from "react";
 import type { Report } from "../../ts/report.v0";
 import { ReportHeader, ReportView } from "./components/ReportView";
 import { EXAMPLES, looksLikeReport } from "./examples";
-import { urlParams, useTheme, type Theme } from "./theme";
+import { urlParams } from "./theme";
 
 const UPLOADED = "uploaded";
 
 /** The example-report viewer: pick a bundled example or open a report file. (`?live=1` is the live mode.) */
 export function App() {
-  const [theme, setTheme] = useTheme();
   const [source, setSource] = useState(
     EXAMPLES.find((e) => e.name === urlParams.get("report"))?.name ??
       EXAMPLES.find((e) => e.name === "support_bot_all_verdicts")?.name ??
@@ -51,14 +50,6 @@ export function App() {
           <label className="file">
             Open a report file
             <input type="file" accept="application/json,.json" onChange={(e) => onFile(e.target.files?.[0])} />
-          </label>
-          <label>
-            Theme
-            <select value={theme} onChange={(e) => setTheme(e.target.value as Theme)}>
-              <option value="system">Match system</option>
-              <option value="light">Light</option>
-              <option value="dark">Dark</option>
-            </select>
           </label>
           <a className="btn" href="?live=1">
             Live mode

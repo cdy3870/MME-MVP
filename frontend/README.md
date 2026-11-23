@@ -14,7 +14,7 @@ reports in `schema/examples/report/valid/` are bundled, so there is no backend t
     npm test
     npm run build
 
-Open `?theme=light|dark` and `?report=<example name>` to link to a view. "Open a report file" loads
+The page is always dark; `?theme=light` switches to light for screenshots. Open `?report=<example name>` to link to a view. "Open a report file" loads
 a report from disk; it only checks that the file looks like a v0 report (the evaluator validates
 against the schema).
 
@@ -30,6 +30,11 @@ Live mode talks to the local server instead of reading example files.
     cd frontend && npm install && npm run dev      # http://localhost:5173/?live=1
 
 Or build once (`npm run build`) and open http://127.0.0.1:8000/?live=1: the server serves the built page itself.
+
+To run evaluations on AWS Batch instead of inside the server, start it with
+`migration-eval serve --executor batch --partner test` (needs the infrastructure in `infra/terraform`
+and AWS credentials; see its README). The screens are the same; keys then live in the partner's
+Secrets Manager secret instead of the server's environment.
 
 The flow: create an export with `migration-eval export`, drop the `.tar.gz` on the first screen, pick a
 component, set the spending cap and the providers candidates may be called on, confirm what will be sent,
