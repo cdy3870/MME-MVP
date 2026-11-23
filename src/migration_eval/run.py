@@ -62,7 +62,7 @@ from migration_eval.checks import CheckResult, first_failure, run_checks
 from migration_eval.early_sample import CandidateRun, run_candidate
 from migration_eval.metrics import LatencySummary, candidate_metrics, latency_summary
 from migration_eval.models import CallRecord, Report
-from migration_eval.noise_floor import Comparator, noise_floor, replay_incumbent, same_output
+from migration_eval.noise_floor import NOISE_FLOOR_RUNS, Comparator, noise_floor, replay_incumbent, same_output
 from migration_eval.pricing import request_cost
 from migration_eval.profile import Incumbent, Profile, build_profile, records_for_component
 from migration_eval.replay import CompleteFn, ReplayResult, error_result, select_sample
@@ -246,10 +246,12 @@ async def measure_baseline(
     config: RunConfig,
     comparator: Comparator = same_output,
     meter: SpendMeter | None = None,
+    on_request_done: Callable[[], None] | None = None,
 ) -> Baseline:
     """Replay the incumbent three times on the sample, then take the noise floor, the latency and
     the cost of those replays. `incumbent_offering` is the incumbent's catalog entry for its
-    prices, or None when it is not in the catalog (cost is then None).
+    prices, or None when it is not in the catalog (cost is then None). `on_request_done` is
+    called as each replayed request finishes, for progress.
     """
     incumbent = prepared.incumbent
     complete = make_complete(incumbent.provider)  # the factory is told where the traffic came from
@@ -257,8 +259,9 @@ async def measure_baseline(
         complete = metered(complete, meter, incumbent_offering)
 
     runs = await replay_incumbent(
-        prepared.sample, incumbent.provider, incumbent.model, complete, speed=config.replay_speed
-    )
+        prepared.sample, incumbent.provider, incumbent.model, complete, speed=config.replay_speed,
+        on_request_done=on_request_done,
+    )  # fmt: skip
 
     every_call = [result for run in runs for result in run]
     if incumbent_offering is None:
@@ -313,10 +316,11 @@ async def evaluate_candidate(
     comparator: Comparator = same_output,
     should_cancel: Callable[[], bool] = lambda: False,
     meter: SpendMeter | None = None,
+    on_request_done: Callable[[], None] | None = None,
 ) -> CandidateEvaluation:
     """Run one candidate with `early_sample.run_candidate` and turn its results into outcomes.
     Stop when `should_cancel()` is true or the spend meter refuses, and return what finished,
-    marked `cancelled`.
+    marked `cancelled`. `on_request_done` is called as each request finishes, for progress.
     """
     send = make_complete(prepared.incumbent.provider)  # the factory is told where the traffic came from
     if meter is not None:
@@ -339,6 +343,7 @@ async def evaluate_candidate(
         complete,
         comparator,
         speed=config.replay_speed,
+        on_request_done=on_request_done,
     )
     outcomes, checks = request_outcomes(prepared.sample, candidate_run.results, baseline, comparator)
 
@@ -461,6 +466,7 @@ async def run_evaluation(
     should_cancel: Callable[[], bool] = lambda: False,
     now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     meter: SpendMeter | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> Report:
     """Evaluate every candidate for one component and return the report.
 
@@ -473,10 +479,26 @@ async def run_evaluation(
 
     Pass a `meter` to read the spend while the run is going (the server shows it); by default one
     is made from `config.spending_cap_usd`.
+
+    `on_progress(done, total)` counts the replayed requests of the stage going on: (0, total) when
+    the baseline or a candidate starts, then once per finished request (retries are not counted
+    again). The baseline's total is three replays of the sample; a candidate's is the sample, and
+    it can end below that when early stopping drops the candidate.
     """
     announce = on_stage or (lambda stage: None)
     if meter is None:
         meter = SpendMeter(config.spending_cap_usd)
+    counts = {"done": 0, "total": 0}
+
+    def begin(total: int) -> None:
+        counts.update(done=0, total=total)
+        if on_progress is not None:
+            on_progress(0, total)
+
+    def request_done() -> None:
+        counts["done"] += 1
+        if on_progress is not None:
+            on_progress(counts["done"], counts["total"])
 
     announce("prepare")
     prepared = prepare(records, config)
@@ -485,8 +507,9 @@ async def run_evaluation(
     candidates, dropped = choose_candidates(catalog_path, prepared, config)
 
     announce("baseline")
+    begin(NOISE_FLOOR_RUNS * len(prepared.sample))
     incumbent_prices = incumbent_offering(catalog_path, prepared.incumbent)
-    baseline = await measure_baseline(prepared, incumbent_prices, make_complete, config, comparator, meter)
+    baseline = await measure_baseline(prepared, incumbent_prices, make_complete, config, comparator, meter, request_done)
     if meter.refused:
         raise RunError("the spending cap was reached before the current model's baseline finished")
 
@@ -496,8 +519,9 @@ async def run_evaluation(
             evaluations.append(_unfinished(offering))
             continue
         announce(f"candidate {offering.provider}/{offering.model}")
+        begin(len(prepared.sample))
         evaluations.append(
-            await evaluate_candidate(offering, prepared, baseline, make_complete, config, comparator, should_cancel, meter)
+            await evaluate_candidate(offering, prepared, baseline, make_complete, config, comparator, should_cancel, meter, request_done)
         )
 
     announce("report")
