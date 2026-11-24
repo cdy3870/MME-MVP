@@ -1,7 +1,7 @@
 """`gpu_profile.json`: the snapshots plus the samples, in one file.
 
 Written by `gpu capture` (GPU-1) and `gpu import` (GPU-3), included by `export`, and read by
-the GPU report (GPU-5 to GPU-9). GPU-11 (vLLM /metrics samples) will add a field here.
+the GPU report (GPU-5 to GPU-9). `vllm_metrics` holds GPU-14's /metrics readings.
 
 Still to decide: how `export` includes it. Options are a `--gpu-profile` flag on `export`, or
 `export` picking up `gpu_profile.json` from the working directory when present. Either way it
@@ -25,6 +25,7 @@ from migration_eval.gpu.idle import IdleWarning
 from migration_eval.gpu.samples import Sample
 from migration_eval.gpu.serving import ServingSettings
 from migration_eval.gpu.snapshot import Snapshot
+from migration_eval.gpu.vllm_metrics import VllmMetricsSource
 
 GPU_PROFILE_SCHEMA_VERSION = "gpu-v0"
 DEFAULT_PROFILE_PATH = Path("gpu_profile.json")
@@ -54,6 +55,8 @@ class GpuProfile(BaseModel):
     process_samples: list[ProcessCpuSample] = []
     serving: list[ServingSettings] = []  # GPU-4: one per serving process found or asked about
     idle_warning: IdleWarning | None = None  # GPU-2
+    # GPU-14: one per vLLM server read (or skipped, or unreachable, with the reason).
+    vllm_metrics: list[VllmMetricsSource] = []
 
 
 def write_profile(profile: GpuProfile, path: Path = DEFAULT_PROFILE_PATH) -> None:

@@ -11,8 +11,8 @@ scripted captures.
 
 The configuration recommendations (GPU-6) compare against these settings. A flag that wasn't
 passed is stored as None, meaning "the engine's default". Defaults change between vLLM
-versions (prefix caching, for one), so the version matters: GPU-11's /version request is the
-reliable source; until then it may be None.
+versions (prefix caching, for one), so the version matters: `gpu capture` fills it from the
+server's /version (GPU-14, vllm_metrics.py), and it stays None when that can't be read.
 
 Command lines can carry secrets (vLLM's --api-key, tokens in env-style args). Redact them
 before anything is stored or printed.
@@ -63,7 +63,9 @@ _FLOAT_FIELDS = {"gpu_memory_utilization"}
 
 class ServingSettings(BaseModel):
     engine: str  # "vllm", or what the partner typed: "sglang", "tgi", "triton", ...
-    source: Literal["vllm-process", "asked"]
+    # vllm-process: launch flags read from `ps`; vllm-metrics: a --vllm-url server `ps` can't see,
+    # filled from what it reports (GPU-14, `vllm_metrics.settings_from_metrics`); asked: GPU-4's questions.
+    source: Literal["vllm-process", "vllm-metrics", "asked"]
     version: str | None = None
     pid: int | None = None
     command_line: str | None = None  # redacted
