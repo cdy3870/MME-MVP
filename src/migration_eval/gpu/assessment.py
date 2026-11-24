@@ -25,6 +25,7 @@ from pydantic import BaseModel
 from migration_eval.gpu.profile import GpuProfile
 from migration_eval.gpu.samples import Sample
 from migration_eval.gpu.snapshot import Snapshot
+from migration_eval.gpu.vllm_metrics import VllmMetricsSummary, summarize as summarize_vllm
 
 
 # nvidia-smi clocks_event_reasons bits.
@@ -133,6 +134,7 @@ class GpuAssessment(BaseModel):
     topology: TopologySummary
     findings: list[Finding]
     missing: list[str]  # readings we couldn't take (commands missing, fields N/A)
+    vllm: list[VllmMetricsSummary] = []  # GPU-14: one per vLLM server whose /metrics was read
 
 
 def summarize(values: list[float | None]) -> Stat | None:
@@ -472,6 +474,12 @@ def build_findings(assessment: GpuAssessment, profile: GpuProfile) -> list[Findi
     if not profile.cpu_samples:
         findings.append(Finding(kind="missing_data", severity="info", gpus=[],
                                 message="CPU samples (`mpstat`) weren't collected, so host CPU load wasn't assessed."))
+    unread = _unread_vllm(profile)
+    if unread:
+        findings.append(Finding(kind="missing_data", severity="info", gpus=[],
+                                message=f"vLLM's metrics weren't read ({'; '.join(unread)}), so request latency, KV cache use "
+                                        "and queueing on the server weren't assessed.",
+                                suggestion="Re-run `gpu capture` with --vllm-url set to the server's address."))
 
     imbalance = assessment.imbalance
     if imbalance is not None and imbalance.spread_pct >= IMBALANCE_SPREAD_PCT:
@@ -557,6 +565,16 @@ def build_findings(assessment: GpuAssessment, profile: GpuProfile) -> list[Findi
     return sorted(findings, key=lambda f: SEVERITY_ORDER[f.severity])
 
 
+def _unread_vllm(profile: GpuProfile) -> list[str]:
+    """Why each vLLM server's metrics are missing: a source that is unreachable or skipped, or
+    "not collected" when vLLM was found but nothing tried to read it (an import without the file)."""
+    reasons = [f"{s.url}: {s.error or s.status}" for s in profile.vllm_metrics if s.status != "ok"]
+    found_vllm = any(s.engine == "vllm" for s in profile.serving)
+    if found_vllm and not profile.vllm_metrics:
+        reasons.append("not collected")
+    return reasons
+
+
 def _missing(profile: GpuProfile, usage: list[GpuUsage]) -> list[str]:
     """Readings we couldn't take, so the report can say what it couldn't see."""
     missing = []
@@ -574,6 +592,7 @@ def _missing(profile: GpuProfile, usage: list[GpuUsage]) -> list[str]:
         missing.append("process CPU samples (pidstat)")
     if not profile.serving:
         missing.append("serving settings")
+    missing.extend(f"vLLM metrics ({reason})" for reason in _unread_vllm(profile))
     for field in ("utilization_pct", "memory_used_mib", "power_draw_w", "temperature_c", "sm_clock_mhz"):
         gpus = [u.index for u in usage if getattr(u, field) is None]
         if gpus:
@@ -592,6 +611,7 @@ def assess(profile: GpuProfile) -> GpuAssessment:
         topology=summarize_topology(profile),
         findings=[],
         missing=_missing(profile, usage),
+        vllm=[summary for source in profile.vllm_metrics if (summary := summarize_vllm(source)) is not None],
     )
     assessment.findings = build_findings(assessment, profile)
     return assessment

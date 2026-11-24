@@ -84,6 +84,37 @@ export interface GpuAssessment {
   topology: TopologySummary;
   findings: Finding[];
   missing: string[];
+  vllm: VllmMetricsSummary[]; // GPU-14: one per vLLM server whose /metrics was read
+}
+
+/** Latency from a vLLM histogram over the capture (GPU-14). Percentiles are bucket bounds. */
+export interface VllmLatency {
+  basis: "measured";
+  observations: number; // requests for time to first token, gaps between tokens for inter-token latency
+  mean_s: number | null;
+  p50_s: number | null;
+  p95_s: number | null;
+}
+
+/** One vLLM server over the capture, from src/migration_eval/gpu/vllm_metrics.py (GPU-14). */
+export interface VllmMetricsSummary {
+  basis: "measured";
+  url: string;
+  version: string | null;
+  samples: number;
+  seconds: number;
+  requests_running_mean: number | null;
+  requests_running_max: number | null;
+  requests_waiting_mean: number | null;
+  requests_waiting_max: number | null;
+  kv_cache_usage_pct_mean: number | null;
+  kv_cache_usage_pct_max: number | null;
+  preemptions: number | null;
+  prompt_tokens_per_s: number | null;
+  generation_tokens_per_s: number | null;
+  prefix_cache_hit_rate_pct: number | null;
+  ttft: VllmLatency | null;
+  tpot: VllmLatency | null;
 }
 
 export interface Recommendation {

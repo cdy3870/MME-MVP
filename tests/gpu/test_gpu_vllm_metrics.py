@@ -297,3 +297,40 @@ def test_summary_with_older_names_uses_the_hit_rate_gauge():
 
 def test_no_samples_no_summary():
     assert summarize(VllmMetricsSource(url="u", url_from="flags", status="unreachable")) is None
+
+
+# --- the assessment -------------------------------------------------------------------------
+
+
+def gpu_profile_with(serving, sources):
+    p = profile([sample(0, i, 50) for i in range(5)])
+    p.serving, p.vllm_metrics = serving, sources
+    return p
+
+
+def test_assessment_summarizes_each_read_server():
+    result = assess(gpu_profile_with([parse_vllm_flags(VLLM_ARGV, pid=4321)], [parse_metrics_file(LOOP, "m.txt")]))
+    assert [v.url for v in result.vllm] == ["file:m.txt"]
+    assert not [m for m in result.missing if "vLLM" in m]
+    assert not [f for f in result.findings if f.kind == "missing_data" and "vLLM" in f.message]
+
+
+@pytest.mark.parametrize(
+    "sources, reason",
+    [
+        ([VllmMetricsSource(url="http://127.0.0.1:8000", url_from="flags", status="unreachable", error="ConnectError")], "http://127.0.0.1:8000: ConnectError"),
+        ([VllmMetricsSource(url="http://127.0.0.1:8000", url_from="flags", status="skipped", error="skipped with --no-vllm-metrics")], "skipped with --no-vllm-metrics"),
+        ([], "not collected"),
+    ],
+)
+def test_assessment_says_when_vllm_metrics_are_missing(sources, reason):
+    result = assess(gpu_profile_with([parse_vllm_flags(VLLM_ARGV, pid=4321)], sources))
+    assert any(m.startswith("vLLM metrics (") and reason in m for m in result.missing)
+    (finding,) = [f for f in result.findings if f.kind == "missing_data" and "vLLM" in f.message]
+    assert reason in finding.message and "--vllm-url" in finding.suggestion
+    assert result.vllm == []
+
+
+def test_no_vllm_no_vllm_notes():
+    result = assess(gpu_profile_with([ServingSettings(engine="sglang", source="asked")], []))
+    assert not [m for m in result.missing if "vLLM" in m]
