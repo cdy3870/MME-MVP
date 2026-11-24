@@ -9,6 +9,8 @@ export interface ProviderStatus {
   name: string; // "openai", "anthropic", "gemini"
   key_variable: string; // the environment variable the server reads, e.g. "ANTHROPIC_API_KEY"
   key_configured: boolean; // never the key itself
+  key_source: "environment" | "secret"; // the server's environment, or the partner's secret (AWS Batch)
+  key_secret: string | null; // the secret's name when key_source is "secret"
 }
 
 export interface ComponentInfo {
@@ -45,14 +47,19 @@ export interface RunStatus {
   upload_id: string;
   component: string;
   state: RunState;
-  stage: string | null; // "prepare", "candidates", "baseline", "candidate <provider>/<model>", "report"
+  // "prepare", "candidates", "baseline", "candidate <provider>/<model>", "report"; on AWS Batch,
+  // first "waiting for a machine" and "starting the worker"
+  stage: string | null;
   stages_done: string[];
   spent_usd: number | null; // read live while the run is going
+  calls_done: number | null; // replayed requests of the current stage (baseline or a candidate)
+  calls_total: number | null; // null in stages that replay nothing
   spending_cap_usd: number | null;
   started_at: string;
   finished_at: string | null;
   error: string | null;
   has_report: boolean;
+  batch_job_id: string | null; // set when the run executes as an AWS Batch job
 }
 
 export interface RunSummary {

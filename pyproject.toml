@@ -24,6 +24,8 @@ dependencies = [
 migration-eval = "migration_eval.cli:app"
 
 [project.optional-dependencies]
+# Runs on AWS Batch (`serve --executor batch`) and the worker image.
+aws = ["boto3>=1.34"]
 # Code generation tools are pinned exactly so `generate_models.py --check` gives
 # the same output on every machine.
 dev = [

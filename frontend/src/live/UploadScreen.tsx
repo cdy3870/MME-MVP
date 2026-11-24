@@ -6,7 +6,6 @@ import { formatBytes } from "./format";
 
 export interface UploadScreenProps {
   onChoose: (upload: UploadInfo, component: string) => void; // the user picked a component to evaluate
-  onShowRuns: () => void;
 }
 
 /**
@@ -16,7 +15,7 @@ export interface UploadScreenProps {
  * each. When the server refuses the file, its reason is shown and another file can be picked. The file
  * stays on this machine and can be removed.
  */
-export function UploadScreen({ onChoose, onShowRuns }: UploadScreenProps) {
+export function UploadScreen({ onChoose }: UploadScreenProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [upload, setUpload] = useState<UploadInfo | null>(null);
@@ -127,12 +126,6 @@ export function UploadScreen({ onChoose, onShowRuns }: UploadScreenProps) {
           </p>
         </section>
       )}
-
-      <p>
-        <button type="button" className="link" onClick={onShowRuns}>
-          Past runs
-        </button>
-      </p>
     </main>
   );
 }

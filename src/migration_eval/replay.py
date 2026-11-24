@@ -179,6 +179,7 @@ async def replay(
     max_calls: int | None = None,
     now: Callable[[], float] | None = None,
     sleep: Callable[[float], Awaitable[None]] | None = None,
+    on_request_done: Callable[[], None] | None = None,
 ) -> list[ReplayResult]:
     """Replay each record's request against `provider`/`model`, one result per record, in order.
 
@@ -187,6 +188,9 @@ async def replay(
     replayed: give them a ReplayResult with an `error` instead of skipping them, so the
     result list lines up with `records`. Stop with an error result for the rest once
     `max_calls` calls have been made.
+
+    `on_request_done` is called once per sent request when its result is in (after any
+    retries), for progress.
     """
     now = now or time.monotonic
     sleep = sleep or asyncio.sleep
@@ -196,7 +200,10 @@ async def replay(
     async def send(record: CallRecord) -> ReplayResult:
         if limiter is not None:
             await limiter.acquire(context_tokens(record) or 0)
-        return await call_with_retry(complete, provider, model, record.request, sleep=sleep)
+        result = await call_with_retry(complete, provider, model, record.request, sleep=sleep)
+        if on_request_done is not None:
+            on_request_done()
+        return result
 
     results: list[ReplayResult | None] = [None] * len(records)
     tasks: dict[int, asyncio.Task[ReplayResult]] = {}
