@@ -25,6 +25,7 @@ VLLM_SERVE = ["vllm", "serve", "Qwen/Qwen2.5-7B", "-tp", "2", "--dtype", "bfloat
 
 PS_OUTPUT = (
     "    1 /sbin/init\n"
+    " 3999 /bin/sh -c \"vllm serve Qwen/Qwen2.5-7B -tp 2 > /var/log/vllm.log\"\n"
     " 4242 python3 -m vllm.entrypoints.openai.api_server --model m --api-key sk-secret\n"
     " 4250 python3 -m vllm.entrypoints.openai.api_server --model m --api-key sk-secret\n"
     " 5000 vllm serve Qwen/Qwen2.5-7B -tp 2\n"
@@ -58,7 +59,7 @@ def test_secrets_never_stored():
     assert redact_command_line(["x", "--api-key=abc", "--hf-token", "t"]) == ["x", "--api-key=<redacted>", "--hf-token", "<redacted>"]
 
 
-def test_find_vllm_processes_keeps_parents_and_skips_grep():
+def test_find_vllm_processes_keeps_parents_and_skips_grep_and_shell_wrappers():
     found = find_vllm_processes(ps)
     assert [pid for pid, _ in found] == [4242, 5000]
 

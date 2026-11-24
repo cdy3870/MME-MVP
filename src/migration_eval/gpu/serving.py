@@ -32,6 +32,9 @@ from migration_eval.gpu.commands import CommandRunner
 PS_ARGS = ("ps", "-eo", "pid=,args=")
 VLLM_MARKERS = ("vllm serve", "vllm.entrypoints.openai.api_server", "vllm.entrypoints.api_server")
 SECRET_FLAG_WORDS = ("key", "token", "secret", "password")
+# A shell that launched vLLM (`sh -c "vllm serve ..."` in a container entrypoint or a systemd unit)
+# has the server's command line in its own; its child is the server, so the shell is skipped.
+SHELLS = ("sh", "bash", "dash", "zsh", "ash", "ksh")
 REDACTED = "<redacted>"
 
 # vLLM flag -> ServingSettings field. Booleans also accept the --no-<flag> form.
@@ -127,7 +130,8 @@ def find_vllm_processes(run: CommandRunner) -> list[tuple[int, list[str]]]:
     """(pid, argv) for each process whose command line contains a VLLM_MARKERS entry.
 
     Run PS_ARGS; each line is "<pid> <args>". Split args with shlex. Skip this CLI's own
-    process and anything that is just a `grep`. `ps` missing (Windows) -> []. vLLM's API
+    process, anything that is just a `grep`, and shells (SHELLS) whose script starts vLLM.
+    `ps` missing (Windows) -> []. vLLM's API
     server can spawn worker processes with the same command line: keep the parent only
     (lowest pid among identical command lines).
     """
@@ -145,7 +149,7 @@ def find_vllm_processes(run: CommandRunner) -> list[tuple[int, list[str]]]:
         if pid == own_pid or not any(marker in args for marker in VLLM_MARKERS):
             continue
         argv = _split(args)
-        if not argv or os.path.basename(argv[0]) in ("grep", "egrep", "rg"):
+        if not argv or os.path.basename(argv[0]) in ("grep", "egrep", "rg", *SHELLS):
             continue
         if args not in by_command or pid < by_command[args]:
             by_command[args] = pid
