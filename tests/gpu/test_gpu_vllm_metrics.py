@@ -334,3 +334,81 @@ def test_assessment_says_when_vllm_metrics_are_missing(sources, reason):
 def test_no_vllm_no_vllm_notes():
     result = assess(gpu_profile_with([ServingSettings(engine="sglang", source="asked")], []))
     assert not [m for m in result.missing if "vLLM" in m]
+
+
+# --- gpu capture ----------------------------------------------------------------------------
+
+
+@pytest.fixture
+def capture_env(monkeypatch):
+    """gpu capture with nvidia-smi faked, `ps` showing a vLLM server (behind a bash wrapper) on
+    port 8011, and HTTP answered by `responses`."""
+    responses: dict[str, str | Exception] = {}
+    fetch = fake_fetch(responses)
+
+    def system(argv):
+        if list(argv) == ["ps", "-eo", "pid=,args="] and system.ps:
+            return CommandResult(argv=list(argv), status="ok", returncode=0, stdout=PS_TEXT)
+        return CommandResult(argv=list(argv), status="missing")
+
+    system.ps = True
+    monkeypatch.setattr(cli, "find_nvidia_smi", lambda: "nvidia-smi")
+    monkeypatch.setattr(cli, "make_runner", lambda binary: fake_nvidia_smi)
+    monkeypatch.setattr(cli, "run_system_command", system)
+    monkeypatch.setattr(cli, "CpuSampler", FakeCpuSampler)
+    monkeypatch.setattr(cli, "http_fetch", lambda client: fetch)
+    monkeypatch.setattr("migration_eval.gpu.samples.time.sleep", lambda s: None)
+    return responses, fetch, system
+
+
+def capture(tmp_path, *extra):
+    out = tmp_path / "gpu_profile.json"
+    result = CliRunner().invoke(cli.app, ["gpu", "capture", "--duration", "2", "--interval", "1", "--out", str(out), "--no-input", *extra])
+    assert result.exit_code == 0, result.output
+    return result, read_profile(out)
+
+
+def test_capture_samples_the_vllm_server_it_finds(tmp_path, capture_env):
+    responses, fetch, _ = capture_env
+    responses.update({"http://127.0.0.1:8011/version": '{"version":"0.33.0"}', "http://127.0.0.1:8011/metrics": REAL})
+    result, p = capture(tmp_path)
+    assert "vLLM metrics: sampling http://127.0.0.1:8011/metrics" in result.output
+    assert "Serving: vllm 0.33.0 (pid 4321), model Qwen/Qwen3-8B" in result.output
+    (serving,) = p.serving  # the bash wrapper is not a second server
+    assert (serving.pid, serving.version, serving.max_num_seqs) == (4321, "0.33.0", 32)
+    (source,) = p.vllm_metrics
+    assert (source.url, source.pid, source.status, source.version) == ("http://127.0.0.1:8011", 4321, "ok", "0.33.0")
+    assert len(source.samples) >= 1  # the probe; the background thread may add more
+
+
+def test_capture_carries_on_when_vllm_is_unreachable(tmp_path, capture_env):
+    result, p = capture(tmp_path)
+    assert "couldn't be read (ConnectError); continuing without them" in result.output
+    assert "--vllm-url" in result.output
+    (source,) = p.vllm_metrics
+    assert (source.status, source.error, source.samples) == ("unreachable", "ConnectError", [])
+    assert len(p.samples) == 4  # the GPU readings are all there
+
+
+def test_capture_with_no_vllm_metrics_calls_nothing(tmp_path, capture_env):
+    _, fetch, _ = capture_env
+    _, p = capture(tmp_path, "--no-vllm-metrics")
+    assert fetch.calls == []
+    assert [(s.status, s.error) for s in p.vllm_metrics] == [("skipped", "skipped with --no-vllm-metrics")]
+
+
+def test_capture_with_vllm_url_and_no_visible_process(tmp_path, capture_env, monkeypatch):
+    responses, _, system = capture_env
+    system.ps = False  # vLLM runs in another container
+    responses.update({"http://localhost:9000/version": '{"version":"0.33.0"}', "http://localhost:9000/metrics": REAL})
+    asked = []
+    monkeypatch.setattr(cli.typer, "prompt", lambda *a, **k: asked.append(a) or "")
+    out = tmp_path / "gpu_profile.json"
+    # Interactive (no --no-input), but the URL stands in for the GPU-4 questions.
+    result = CliRunner().invoke(cli.app, ["gpu", "capture", "--duration", "2", "--interval", "1", "--out", str(out), "--vllm-url", "localhost:9000/metrics"])
+    assert result.exit_code == 0, result.output
+    assert asked == []
+    p = read_profile(out)
+    (serving,) = p.serving
+    assert (serving.source, serving.version, serving.model, serving.enable_prefix_caching) == ("vllm-metrics", "0.33.0", "Qwen/Qwen3-8B", True)
+    assert [(s.url, s.url_from, s.status) for s in p.vllm_metrics] == [("http://localhost:9000", "option", "ok")]

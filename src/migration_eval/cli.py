@@ -56,6 +56,15 @@ from migration_eval.gpu.samples import (
     resolve_fields,
 )
 from migration_eval.gpu.snapshot import take_snapshot
+from migration_eval.gpu.vllm_metrics import (
+    REQUEST_TIMEOUT_S as VLLM_TIMEOUT_S,
+    VllmMetricsSampler,
+    apply_versions,
+    http_fetch,
+    plan_sources,
+    probe,
+    settings_from_metrics,
+)
 from migration_eval.keys import MissingKeys, read_keys
 from migration_eval.models import CallRecord, Report
 from migration_eval.profile import build_profile, records_for_component
@@ -182,11 +191,21 @@ def gpu_capture_command(
     no_input: bool = typer.Option(
         False, "--no-input", help="Don't ask about the serving engine when no vLLM process is found."
     ),
+    vllm_url: list[str] = typer.Option(
+        [], "--vllm-url", help="Read vLLM's /metrics here instead of the address in its launch flags (e.g. a container's mapped port). Repeat for several servers."
+    ),
+    no_vllm_metrics: bool = typer.Option(
+        False, "--no-vllm-metrics", help="Read vLLM's launch flags but don't call its /metrics or /version."
+    ),
 ) -> None:
     """Sample this machine's GPUs with nvidia-smi and write gpu_profile.json (GPU-1).
 
     Run it on the GPU machine during normal traffic. Ctrl-C stops early and still writes what
     was collected. `export` includes the profile.
+
+    When vLLM is running, its launch flags are read from the process list and its /metrics is
+    sampled on the same interval as the GPUs (GPU-14). If a server can't be reached the capture
+    carries on without its metrics, and the report says so.
     """
     try:
         ticks = planned_ticks(interval, duration)
@@ -217,10 +236,26 @@ def gpu_capture_command(
     if not_found:
         typer.echo(f"Not installed here, skipped: {', '.join(not_found)}.")
 
-    serving = collect_serving_settings(run_system_command, typer.prompt, interactive=not no_input)
+    # With --vllm-url the server is known even when `ps` can't see it, so don't ask GPU-4's questions.
+    serving = collect_serving_settings(run_system_command, typer.prompt, interactive=not no_input and not vllm_url)
+    vllm_sources = plan_sources(serving, vllm_url, enabled=not no_vllm_metrics)
+    vllm_client = httpx.Client(timeout=VLLM_TIMEOUT_S)
+    fetch = http_fetch(vllm_client)
+    for source in vllm_sources:
+        probe(source, fetch, lambda: datetime.now(timezone.utc))
+    apply_versions(serving, vllm_sources)
+    if vllm_url and not any(s.source == "vllm-process" for s in serving):
+        serving.extend(settings_from_metrics(source) for source in vllm_sources if source.status == "ok")
     for s in serving:
         where = f" (pid {s.pid})" if s.pid else ""
-        typer.echo(f"Serving: {s.engine}{where}" + (f", model {s.model}" if s.model else ""))
+        version = f" {s.version}" if s.version else ""
+        typer.echo(f"Serving: {s.engine}{version}{where}" + (f", model {s.model}" if s.model else ""))
+    for source in vllm_sources:
+        if source.status == "ok":
+            typer.echo(f"vLLM metrics: sampling {source.url}/metrics")
+        elif source.status == "unreachable":
+            typer.echo(f"Warning: vLLM metrics at {source.url}/metrics couldn't be read ({source.error}); continuing without them. "
+                       "If the server listens elsewhere, pass --vllm-url.", err=True)  # fmt: skip
 
     if whole_seconds(interval) != interval:
         typer.echo(f"Note: CPU sampling (mpstat, pidstat) uses whole seconds, so every {whole_seconds(interval)}s.")
@@ -232,8 +267,14 @@ def gpu_capture_command(
     cpu_ticks = max(1, int(duration // whole_seconds(interval)))
     sampler = CpuSampler(interval, cpu_ticks)
     sampler.start()
+    vllm_sampler = VllmMetricsSampler(vllm_sources, interval, fetch)
+    vllm_sampler.start()
     started_at = datetime.now(timezone.utc)
-    result = collect(run, interval, duration, fields=fields, on_tick=progress)
+    try:
+        result = collect(run, interval, duration, fields=fields, on_tick=progress)
+    finally:
+        vllm_sampler.stop()
+        vllm_client.close()
     ended_at = datetime.now(timezone.utc)
     typer.echo("")
 
@@ -277,6 +318,7 @@ def gpu_capture_command(
         process_samples=process_samples,
         serving=serving,
         idle_warning=idle_warning,
+        vllm_metrics=vllm_sources,
     )
     write_profile(profile, out)
     typer.echo(f"Wrote {out}")
