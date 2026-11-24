@@ -361,6 +361,13 @@ def gpu_import_command(
         f"{len(profile.samples)} samples from {settings.started_at:%Y-%m-%d %H:%M:%S} to "
         f"{settings.ended_at:%H:%M:%S}, every {settings.interval_s:g}s."
     )
+    for s in profile.serving:
+        where = f" (pid {s.pid})" if s.pid else ""
+        version = f" {s.version}" if s.version else ""
+        typer.echo(f"Serving: {s.engine}{version}{where}" + (f", model {s.model}" if s.model else ""))
+    for source in profile.vllm_metrics:
+        failed = f", {source.ticks_failed} unreadable" if source.ticks_failed else ""
+        typer.echo(f"vLLM metrics: {len(source.samples)} readings from {source.url.removeprefix('file:')}{failed}")
     missing = missing_pieces(profile)
     if missing:
         typer.echo(f"Not included: {', '.join(missing)}.")

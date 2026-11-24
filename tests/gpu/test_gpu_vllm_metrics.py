@@ -412,3 +412,59 @@ def test_capture_with_vllm_url_and_no_visible_process(tmp_path, capture_env, mon
     (serving,) = p.serving
     assert (serving.source, serving.version, serving.model, serving.enable_prefix_caching) == ("vllm-metrics", "0.33.0", "Qwen/Qwen3-8B", True)
     assert [(s.url, s.url_from, s.status) for s in p.vllm_metrics] == [("http://localhost:9000", "option", "ok")]
+
+
+# --- gpu import -----------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text, kind",
+    [(LOOP, FileKind.VLLM_METRICS), ('{"version":"0.33.0"}\n', FileKind.VLLM_VERSION), (PS_TEXT, FileKind.PS)],
+)
+def test_detect_vllm_files(text, kind):
+    assert detect_kind(text) is kind
+
+
+def write(tmp_path: Path, files: dict[str, str]) -> list[Path]:
+    paths = []
+    for name, text in files.items():
+        (tmp_path / name).write_text(text)
+        paths.append(tmp_path / name)
+    return paths
+
+
+def test_import_reads_flags_version_and_metrics(tmp_path):
+    paths = write(tmp_path, {"q.xml": QUERY_XML, "s.csv": SAMPLES_CSV, "ps.txt": PS_TEXT, "v.json": '{"version":"0.33.0"}', "m.txt": LOOP})
+    p = import_files(paths)
+    (serving,) = p.serving
+    assert (serving.source, serving.pid, serving.version, serving.max_num_seqs) == ("vllm-process", 4321, "0.33.0", 32)
+    (source,) = p.vllm_metrics
+    assert (source.url, source.version, len(source.samples)) == ("file:m.txt", "0.33.0", 4)
+    assert not [m for m in missing_pieces(p) if "vLLM" in m]
+
+
+def test_import_takes_one_metrics_file_per_server(tmp_path):
+    paths = write(tmp_path, {"q.xml": QUERY_XML, "s.csv": SAMPLES_CSV, "a.txt": LOOP, "b.txt": LOOP})
+    p = import_files(paths)
+    assert [s.url for s in p.vllm_metrics] == ["file:a.txt", "file:b.txt"]
+    assert [s.source for s in p.serving] == ["vllm-metrics", "vllm-metrics"]  # no ps output: from the metrics
+    assert "vLLM launch flags (ps -eo pid=,args=)" in missing_pieces(p)
+
+
+def test_import_with_ps_but_no_metrics_says_so(tmp_path):
+    p = import_files(write(tmp_path, {"q.xml": QUERY_XML, "s.csv": SAMPLES_CSV, "ps.txt": PS_TEXT}))
+    assert "vLLM metrics (curl /metrics loop)" in missing_pieces(p)
+    assert any(m.startswith("vLLM metrics (not collected") for m in assess(p).missing)
+
+
+def test_import_rejects_a_metrics_file_with_no_reading(tmp_path):
+    paths = write(tmp_path, {"q.xml": QUERY_XML, "s.csv": SAMPLES_CSV,
+                             "m.txt": "# mme-sample 2026-11-24T04:00:00Z\nvllm:broken{\n# mme-sample garbage\nvllm:x 1\n"})  # fmt: skip
+    with pytest.raises(FileRejected, match="could not read the vLLM metrics"):
+        import_files(paths)
+
+
+def test_print_commands_explain_the_vllm_files():
+    result = CliRunner().invoke(cli.app, ["gpu", "import", "--print-commands"])
+    for command in ("ps -eo pid=,args=", "/version", "# mme-sample", "/metrics"):
+        assert command in result.output
